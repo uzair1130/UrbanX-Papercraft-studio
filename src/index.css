@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    @apply bg-white text-neutral-900 antialiased overflow-hidden select-none transition-colors duration-150;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  body.dark,
+  .dark body {
+    @apply bg-[#0c0f17] text-neutral-100;
+  }
+
+  /* Architectural sharp minimal scrollbars */
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #f4f4f5;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #d4d4d8;
+    border-radius: 0px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #a1a1aa;
+  }
+
+  .dark ::-webkit-scrollbar-track {
+    background: #111520;
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background: #273145;
+    border-radius: 0px;
+  }
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: #3c4b68;
+  }
+
+  /* Sharp range sliders with yellow-amber accent */
+  input[type="range"] {
+    accent-color: #f59e0b;
+  }
+}
+
+/* Secondary Red-to-Yellow Gradient utilities */
+.bg-ry-gradient {
+  background: linear-gradient(135deg, #ef4444 0%, #f59e0b 50%, #eab308 100%);
+}
+
+.text-ry-gradient {
+  background: linear-gradient(135deg, #ef4444 0%, #f59e0b 50%, #eab308 100%) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  color: transparent !important;
+  display: inline-block;
+}
+
+.border-ry-gradient {
+  border-image: linear-gradient(to right, #ef4444, #f59e0b, #eab308) 1;
+}

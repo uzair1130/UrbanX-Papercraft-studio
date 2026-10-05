@@ -1,0 +1,6 @@
+{
+  "name": "Interactive 3D Urban Resilience & Disaster Simulation",
+  "description": "Blender-grade papercraft & architectural visualization studio with real-time ray tracing, modular snap assembly, texture mapping, SimCity-style urban resilience simulator, natural disaster dynamics, analytical casualty reporting, and multi-format 3D export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
