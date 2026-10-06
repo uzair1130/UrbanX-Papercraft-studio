@@ -13,6 +13,13 @@ import { Header } from './components/common/Header';
 import { BlenderStudio } from './components/studio/BlenderStudio';
 import { ExportModal } from './components/export/ExportModal';
 import { TutorialModal } from './components/tutorial/TutorialModal';
+import { DeviceProjectModal } from './components/studio/DeviceProjectModal';
+import { 
+  loadActiveDraftFromDevice, 
+  loadDeviceCatalog, 
+  saveActiveDraftToDevice, 
+  saveBuildingToDeviceCatalog 
+} from './utils/deviceStorage';
 
 export default function App() {
   // Minimalist clean white theme by default, with dark mode option
@@ -38,13 +45,23 @@ export default function App() {
     }
   }, [theme]);
 
-  // Building currently loaded in 3D Blender Studio
-  const [currentBuilding, setCurrentBuilding] = useState<BuildingModel>(
-    STARTER_BUILDING
-  );
+  // Building currently loaded in 3D Blender Studio (restores active draft from device storage if present)
+  const [currentBuilding, setCurrentBuilding] = useState<BuildingModel>(() => {
+    const savedDraft = loadActiveDraftFromDevice();
+    return savedDraft || STARTER_BUILDING;
+  });
 
-  // User's catalog of saved buildings
-  const [buildingCatalog, setBuildingCatalog] = useState<Record<string, BuildingModel>>(DEFAULT_BUILDINGS);
+  // User's catalog of saved buildings on this device
+  const [buildingCatalog, setBuildingCatalog] = useState<Record<string, BuildingModel>>(() => {
+    return loadDeviceCatalog();
+  });
+
+  // Automatically persist current active draft to device local storage
+  useEffect(() => {
+    if (currentBuilding) {
+      saveActiveDraftToDevice(currentBuilding);
+    }
+  }, [currentBuilding]);
 
   // Ray Tracing / Rendering Settings
   const [rtxSettings, setRtxSettings] = useState<RayTracingSettings>({
@@ -67,12 +84,20 @@ export default function App() {
   // Tutorial Modal State
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
-  // Save current building to local catalog
+  // Device Project Storage Modal State
+  const [deviceModalOpen, setDeviceModalOpen] = useState(false);
+  const [deviceModalTab, setDeviceModalTab] = useState<'saved' | 'save' | 'open'>('saved');
+
+  // Open Device Storage modal with specific tab
+  const handleOpenDeviceModal = (tab: 'saved' | 'save' | 'open' = 'saved') => {
+    setDeviceModalTab(tab);
+    setDeviceModalOpen(true);
+  };
+
+  // Save current building to device persistent catalog
   const handleSaveToCatalog = (bldg: BuildingModel) => {
-    setBuildingCatalog((prev) => ({
-      ...prev,
-      [bldg.id]: bldg,
-    }));
+    const updated = saveBuildingToDeviceCatalog(bldg);
+    setBuildingCatalog(updated);
   };
 
   // Start new project
@@ -108,6 +133,7 @@ export default function App() {
       <Header
         onOpenTutorial={() => setTutorialOpen(true)}
         onOpenExport={() => setExportModalOpen(true)}
+        onOpenDeviceProjects={handleOpenDeviceModal}
         rtxEnabled={rtxSettings.enabled}
         onToggleRtx={() => setRtxSettings((s) => ({ ...s, enabled: !s.enabled }))}
         currentBuilding={currentBuilding}
@@ -128,6 +154,7 @@ export default function App() {
           onSaveToCatalog={handleSaveToCatalog}
           buildingCatalog={buildingCatalog}
           onSelectBuilding={setCurrentBuilding}
+          onOpenDeviceProjects={handleOpenDeviceModal}
           rtxSettings={rtxSettings}
           onUpdateRtxSettings={setRtxSettings}
           theme={theme}
@@ -147,6 +174,17 @@ export default function App() {
       <TutorialModal
         isOpen={tutorialOpen}
         onClose={() => setTutorialOpen(false)}
+      />
+
+      {/* Device Project Storage & Resume Unfinished Buildings Modal */}
+      <DeviceProjectModal
+        isOpen={deviceModalOpen}
+        onClose={() => setDeviceModalOpen(false)}
+        currentBuilding={currentBuilding}
+        buildingCatalog={buildingCatalog}
+        onSelectBuilding={setCurrentBuilding}
+        onUpdateBuildingCatalog={setBuildingCatalog}
+        initialTab={deviceModalTab}
       />
     </div>
   );

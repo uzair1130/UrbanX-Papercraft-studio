@@ -276,6 +276,96 @@ function createBaseComponentGeometry(shape: ComponentShape, scale: [number, numb
     case 'balcony_tab': {
       return new THREE.BoxGeometry(sx, Math.max(0.08, sy), sz);
     }
+
+    // ----------------------------------------------------
+    // ARCHITECTURAL SLABS & PODIUM PLATES (Floor & Ceiling Slabs)
+    // ----------------------------------------------------
+    case 'square_slab': {
+      // 4-sided square floor slab / podium deck with edge bevel subdivisions
+      return new THREE.BoxGeometry(sx, sy, sz, 16, 2, 16);
+    }
+    case 'circle_slab': {
+      // Circular round disc slab / patio platform
+      return new THREE.CylinderGeometry(sx * 0.5, sx * 0.5, sy, 32, 2);
+    }
+    case 'triangle_slab': {
+      // 3-sided regular triangular floor slab / cantilever plate
+      const geom = new THREE.CylinderGeometry(sx * 0.55, sx * 0.55, sy, 3, 2);
+      geom.rotateY(Math.PI / 6);
+      return geom;
+    }
+    case 'pentagon_slab': {
+      // 5-sided regular pentagon floor slab / platform
+      const geom = new THREE.CylinderGeometry(sx * 0.5, sx * 0.5, sy, 5, 2);
+      geom.rotateY(-Math.PI / 10);
+      return geom;
+    }
+    case 'hexagon_slab': {
+      // 6-sided regular hexagon floor slab / terrace
+      const geom = new THREE.CylinderGeometry(sx * 0.5, sx * 0.5, sy, 6, 2);
+      geom.rotateY(Math.PI / 6);
+      return geom;
+    }
+    case 'octagon_slab': {
+      // 8-sided regular octagon floor slab / gazebo plinth
+      const geom = new THREE.CylinderGeometry(sx * 0.5, sx * 0.5, sy, 8, 2);
+      geom.rotateY(Math.PI / 8);
+      return geom;
+    }
+    case 'semicircle_slab': {
+      // Half-circle / D-shaped curved balcony slab
+      const shape2D = new THREE.Shape();
+      const r = sx * 0.5;
+      shape2D.absarc(0, 0, r, 0, Math.PI, false);
+      shape2D.closePath();
+      const geom = new THREE.ExtrudeGeometry(shape2D, {
+        depth: sy,
+        bevelEnabled: false,
+        curveSegments: 24,
+      });
+      geom.rotateX(Math.PI / 2);
+      geom.center();
+      if (geom.index && geom.groups.length >= 2) {
+        const capCount = geom.groups[0].count;
+        const sideStart = geom.groups[1].start;
+        const sideCount = geom.groups[1].count;
+        const halfCap = Math.floor(capCount / 2);
+        geom.clearGroups();
+        geom.addGroup(sideStart, sideCount, 0); // 0: side rim
+        geom.addGroup(0, halfCap, 1);           // 1: top cap
+        geom.addGroup(halfCap, halfCap, 2);     // 2: bottom cap
+      }
+      return geom;
+    }
+    case 'trapezoid_slab': {
+      // 4-sided tapered trapezoidal floor slab / cantilever plate
+      const shape2D = new THREE.Shape();
+      const hxBottom = sx * 0.5;
+      const hxTop = sx * 0.3;
+      const hz = sz * 0.5;
+      shape2D.moveTo(-hxBottom, -hz);
+      shape2D.lineTo(hxBottom, -hz);
+      shape2D.lineTo(hxTop, hz);
+      shape2D.lineTo(-hxTop, hz);
+      shape2D.closePath();
+      const geom = new THREE.ExtrudeGeometry(shape2D, {
+        depth: sy,
+        bevelEnabled: false,
+      });
+      geom.rotateX(Math.PI / 2);
+      geom.center();
+      if (geom.index && geom.groups.length >= 2) {
+        const capCount = geom.groups[0].count;
+        const sideStart = geom.groups[1].start;
+        const sideCount = geom.groups[1].count;
+        const halfCap = Math.floor(capCount / 2);
+        geom.clearGroups();
+        geom.addGroup(sideStart, sideCount, 0); // 0: side rim
+        geom.addGroup(0, halfCap, 1);           // 1: top cap
+        geom.addGroup(halfCap, halfCap, 2);     // 2: bottom cap
+      }
+      return geom;
+    }
     case 'arch_portal': {
       return new THREE.CylinderGeometry(sx * 0.5, sx * 0.5, sz, 16, 1, false, 0, Math.PI);
     }

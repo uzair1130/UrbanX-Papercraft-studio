@@ -42,8 +42,15 @@ import {
   X,
   Undo2,
   Redo2,
-  Triangle
+  Triangle,
+  HardDrive,
+  Download,
+  History,
+  Clock,
+  ChevronDown
 } from 'lucide-react';
+import { exportBuildingToDeviceFile } from '../../utils/deviceStorage';
+import { HistoryManager, HistoryManagerState, cloneComponents } from '../../utils/historyManager';
 
 export const FACE_OPTIONS: Array<{ key: GeometryFaceKey; label: string; tag: string; desc: string }> = [
   { key: 'all', label: 'All Faces', tag: 'ALL', desc: 'Apply texture uniformly to all surfaces' },
@@ -64,16 +71,34 @@ export function getFaceOptionsForShape(shape?: ComponentShape): Array<{ key: Geo
     shape === 'paper_sheet' || 
     shape === 'square_paper' || 
     shape === 'folded_wall' || 
-    shape === 'balcony_tab'
+    shape === 'balcony_tab' ||
+    shape === 'square_slab'
   ) {
     return [
-      { key: 'all', label: 'All Faces', tag: 'ALL', desc: 'Uniform texture on all 6 faces' },
-      { key: 'front', label: 'Front (+Z)', tag: '+Z', desc: 'Front facade facing camera' },
-      { key: 'back', label: 'Back (-Z)', tag: '-Z', desc: 'Rear facade surface' },
-      { key: 'left', label: 'Left (-X)', tag: '-X', desc: 'Left lateral wall' },
-      { key: 'right', label: 'Right (+X)', tag: '+X', desc: 'Right lateral wall' },
-      { key: 'top', label: 'Top / Roof (+Y)', tag: '+Y', desc: 'Top horizontal roof deck' },
-      { key: 'bottom', label: 'Bottom (-Y)', tag: '-Y', desc: 'Bottom foundation / base' },
+      { key: 'all', label: 'All Faces', tag: 'ALL', desc: 'Uniform texture on all faces' },
+      { key: 'top', label: 'Top Surface (+Y)', tag: '+Y', desc: 'Top floor deck / podium plate' },
+      { key: 'bottom', label: 'Bottom Face (-Y)', tag: '-Y', desc: 'Bottom underside / ceiling' },
+      { key: 'front', label: 'Front Edge (+Z)', tag: '+Z', desc: 'Front edge facing camera' },
+      { key: 'back', label: 'Back Edge (-Z)', tag: '-Z', desc: 'Rear facade edge' },
+      { key: 'left', label: 'Left Edge (-X)', tag: '-X', desc: 'Left lateral edge' },
+      { key: 'right', label: 'Right Edge (+X)', tag: '+X', desc: 'Right lateral edge' },
+    ];
+  }
+
+  if (
+    shape === 'circle_slab' ||
+    shape === 'triangle_slab' ||
+    shape === 'pentagon_slab' ||
+    shape === 'hexagon_slab' ||
+    shape === 'octagon_slab' ||
+    shape === 'semicircle_slab' ||
+    shape === 'trapezoid_slab'
+  ) {
+    return [
+      { key: 'all', label: 'All Faces', tag: 'ALL', desc: 'Uniform texture on entire slab' },
+      { key: 'top', label: 'Top Surface (+Y)', tag: '+Y', desc: 'Top platform / floor deck' },
+      { key: 'bottom', label: 'Bottom Face (-Y)', tag: '-Y', desc: 'Bottom underside / ceiling' },
+      { key: 'side', label: 'Rim Edge', tag: 'EDGE', desc: 'Perimeter edge border' },
     ];
   }
 
@@ -135,6 +160,7 @@ interface BlenderStudioProps {
   onSaveToCatalog: (bldg: BuildingModel) => void;
   buildingCatalog?: Record<string, BuildingModel>;
   onSelectBuilding?: (bldg: BuildingModel) => void;
+  onOpenDeviceProjects?: (tab?: 'saved' | 'save' | 'open') => void;
   rtxSettings: RayTracingSettings;
   onUpdateRtxSettings: (settings: RayTracingSettings) => void;
   theme?: 'light' | 'dark';
@@ -146,6 +172,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
   onSaveToCatalog,
   buildingCatalog,
   onSelectBuilding,
+  onOpenDeviceProjects,
   rtxSettings,
   onUpdateRtxSettings,
   theme = 'light',
@@ -180,83 +207,152 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
   const [saveAsCategory, setSaveAsCategory] = useState<BuildingModel['category']>(currentBuilding.category);
   const [saveAsDesc, setSaveAsDesc] = useState(currentBuilding.description || '');
 
-  // Undo / Redo History Stack
-  const historyRef = useRef<PaperComponent[][]>([JSON.parse(JSON.stringify(currentBuilding.components))]);
-  const historyIndexRef = useRef<number>(0);
-  const [canUndo, setCanUndo] = useState(false);
-  const [canRedo, setCanRedo] = useState(false);
+  // Dedicated Blender-Grade History State Manager
+  const [historyState, setHistoryState] = useState<HistoryManagerState>(() => ({
+    entries: [
+      {
+        id: `hist_init_${Date.now()}`,
+        action: `Opened "${currentBuilding.name}"`,
+        timestamp: Date.now(),
+        components: cloneComponents(currentBuilding.components),
+        selectedCompId: null,
+        heightMeters: currentBuilding.heightMeters,
+      },
+    ],
+    currentIndex: 0,
+    canUndo: false,
+    canRedo: false,
+  }));
+
+  const historyManagerRef = useRef<HistoryManager | null>(null);
+  if (!historyManagerRef.current) {
+    historyManagerRef.current = new HistoryManager(
+      currentBuilding.components,
+      null,
+      currentBuilding.heightMeters,
+      (nextState) => setHistoryState(nextState)
+    );
+  }
+
+  // History UI dropdown & HUD feedback toast
+  const [historyDropdownOpen, setHistoryDropdownOpen] = useState(false);
+  const [historyToast, setHistoryToast] = useState<{ message: string; type: 'undo' | 'redo' } | null>(null);
+  const historyDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close history dropdown when clicking outside
+  useEffect(() => {
+    if (!historyDropdownOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (historyDropdownRef.current && !historyDropdownRef.current.contains(e.target as Node)) {
+        setHistoryDropdownOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', handleClickOutside);
+    return () => window.removeEventListener('mousedown', handleClickOutside);
+  }, [historyDropdownOpen]);
 
   // Reset history stack whenever a different building is opened
   const lastBuildingIdRef = useRef(currentBuilding.id);
   useEffect(() => {
     if (currentBuilding.id !== lastBuildingIdRef.current) {
       lastBuildingIdRef.current = currentBuilding.id;
-      historyRef.current = [JSON.parse(JSON.stringify(currentBuilding.components))];
-      historyIndexRef.current = 0;
-      setCanUndo(false);
-      setCanRedo(false);
+      historyManagerRef.current?.reset(
+        currentBuilding.components,
+        null,
+        currentBuilding.heightMeters,
+        `Opened "${currentBuilding.name}"`
+      );
+      setHistoryDropdownOpen(false);
     }
-  }, [currentBuilding.id]);
+  }, [currentBuilding.id, currentBuilding.name, currentBuilding.heightMeters]);
 
-  // Push state snapshot to history
-  const pushHistory = (newComponents: PaperComponent[]) => {
-    const snapshot: PaperComponent[] = JSON.parse(JSON.stringify(newComponents));
-    const branch = historyRef.current.slice(0, historyIndexRef.current + 1);
-    branch.push(snapshot);
-    if (branch.length > 50) {
-      branch.shift();
+  // Push state snapshot to history manager
+  const pushHistory = (
+    newComponents: PaperComponent[],
+    actionLabel: string = 'Modify Building',
+    isContinuous: boolean = false
+  ) => {
+    const maxHeight = newComponents.length > 0
+      ? Math.max(...newComponents.map((c) => c.position[1] + c.scale[1] / 2), 2) * 4
+      : 0;
+    if (isContinuous) {
+      historyManagerRef.current?.pushDebounced(actionLabel, newComponents, selectedCompId, Math.round(maxHeight));
+    } else {
+      historyManagerRef.current?.push(actionLabel, newComponents, selectedCompId, Math.round(maxHeight));
     }
-    historyRef.current = branch;
-    historyIndexRef.current = branch.length - 1;
-    setCanUndo(historyIndexRef.current > 0);
-    setCanRedo(false);
   };
 
   // Undo
   const handleUndo = () => {
-    if (historyIndexRef.current > 0) {
-      historyIndexRef.current -= 1;
-      const prevComponents: PaperComponent[] = JSON.parse(
-        JSON.stringify(historyRef.current[historyIndexRef.current])
-      );
-      const maxHeight = Math.max(...prevComponents.map((c) => c.position[1] + c.scale[1] / 2), 2) * 4;
+    if (!historyManagerRef.current) return;
+    const undoneAction = historyManagerRef.current.undoAction;
+    const entry = historyManagerRef.current.undo();
+    if (entry) {
       onUpdateBuilding({
         ...currentBuilding,
-        components: prevComponents,
-        heightMeters: Math.round(maxHeight),
+        components: cloneComponents(entry.components),
+        heightMeters: entry.heightMeters,
       });
 
-      if (selectedCompId && !prevComponents.some((c) => c.id === selectedCompId)) {
-        setSelectedCompId(prevComponents[0]?.id || null);
+      if (entry.selectedCompId && entry.components.some((c) => c.id === entry.selectedCompId)) {
+        setSelectedCompId(entry.selectedCompId);
+      } else {
+        setSelectedCompId(entry.components[0]?.id || null);
       }
 
-      setCanUndo(historyIndexRef.current > 0);
-      setCanRedo(true);
+      setHistoryToast({ message: `Undid "${undoneAction}"`, type: 'undo' });
+      setTimeout(() => setHistoryToast(null), 1800);
     }
   };
 
   // Redo
   const handleRedo = () => {
-    if (historyIndexRef.current < historyRef.current.length - 1) {
-      historyIndexRef.current += 1;
-      const nextComponents: PaperComponent[] = JSON.parse(
-        JSON.stringify(historyRef.current[historyIndexRef.current])
-      );
-      const maxHeight = Math.max(...nextComponents.map((c) => c.position[1] + c.scale[1] / 2), 2) * 4;
+    if (!historyManagerRef.current) return;
+    const redoneAction = historyManagerRef.current.redoAction;
+    const entry = historyManagerRef.current.redo();
+    if (entry) {
       onUpdateBuilding({
         ...currentBuilding,
-        components: nextComponents,
-        heightMeters: Math.round(maxHeight),
+        components: cloneComponents(entry.components),
+        heightMeters: entry.heightMeters,
       });
 
-      if (selectedCompId && !nextComponents.some((c) => c.id === selectedCompId)) {
-        setSelectedCompId(nextComponents[0]?.id || null);
+      if (entry.selectedCompId && entry.components.some((c) => c.id === entry.selectedCompId)) {
+        setSelectedCompId(entry.selectedCompId);
+      } else {
+        setSelectedCompId(entry.components[0]?.id || null);
       }
 
-      setCanUndo(true);
-      setCanRedo(historyIndexRef.current < historyRef.current.length - 1);
+      setHistoryToast({ message: `Redid "${redoneAction}"`, type: 'redo' });
+      setTimeout(() => setHistoryToast(null), 1800);
     }
   };
+
+  // Jump directly to any historical timeline step
+  const handleJumpToHistory = (index: number) => {
+    if (!historyManagerRef.current) return;
+    const entry = historyManagerRef.current.jumpTo(index);
+    if (entry) {
+      onUpdateBuilding({
+        ...currentBuilding,
+        components: cloneComponents(entry.components),
+        heightMeters: entry.heightMeters,
+      });
+
+      if (entry.selectedCompId && entry.components.some((c) => c.id === entry.selectedCompId)) {
+        setSelectedCompId(entry.selectedCompId);
+      } else {
+        setSelectedCompId(entry.components[0]?.id || null);
+      }
+
+      setHistoryToast({ message: `Restored: "${entry.action}"`, type: 'undo' });
+      setTimeout(() => setHistoryToast(null), 1800);
+      setHistoryDropdownOpen(false);
+    }
+  };
+
+  const canUndo = historyState.canUndo;
+  const canRedo = historyState.canRedo;
 
   // Mouse & Viewport Navigation state
   const isDraggingRef = useRef(false);
@@ -572,7 +668,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
     }
   }, [currentBuilding, renderMode, snapEnabled, selectedCompId]);
 
-  // Handle Mouse Click Raycasting for Component Selection
+  // Handle Mouse Click Raycasting for Component Selection and Per-Face Picking
   const handleViewportClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!mountRef.current || !cameraRef.current || !sceneRef.current) return;
     const rect = mountRef.current.getBoundingClientRect();
@@ -586,10 +682,97 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
     const intersects = raycaster.intersectObjects(meshes, false);
 
     if (intersects.length > 0) {
-      const hitMesh = intersects[0].object as THREE.Mesh;
+      const hit = intersects[0];
+      const hitMesh = hit.object as THREE.Mesh;
       const compId = hitMesh.userData.componentId;
       if (compId) {
         setSelectedCompId(compId);
+
+        // Detect clicked face in local mesh coordinates for precise per-face texturing
+        if (hit.face) {
+          const worldNormal = hit.face.normal.clone();
+          const normalMatrix = new THREE.Matrix3().getNormalMatrix(hitMesh.matrixWorld);
+          normalMatrix.invert();
+          const localNormal = worldNormal.applyMatrix3(normalMatrix).normalize();
+
+          const comp = currentBuilding.components.find((c) => c.id === compId);
+          const shape = comp?.shape || 'paper_box';
+          let detectedFace: GeometryFaceKey = 'front';
+
+          const absX = Math.abs(localNormal.x);
+          const absY = Math.abs(localNormal.y);
+          const absZ = Math.abs(localNormal.z);
+
+          if (
+            shape === 'paper_box' ||
+            shape === 'paper_sheet' ||
+            shape === 'square_paper' ||
+            shape === 'folded_wall' ||
+            shape === 'balcony_tab' ||
+            shape === 'square_slab'
+          ) {
+            if (absY >= absX && absY >= absZ) {
+              detectedFace = localNormal.y > 0 ? 'top' : 'bottom';
+            } else if (absX >= absY && absX >= absZ) {
+              detectedFace = localNormal.x > 0 ? 'right' : 'left';
+            } else {
+              detectedFace = localNormal.z > 0 ? 'front' : 'back';
+            }
+          } else if (
+            shape === 'cylindrical_column' ||
+            shape === 'triangular_prism' ||
+            shape === 'hexagonal_prism' ||
+            shape === 'octagonal_prism' ||
+            shape === 'barrel_vault' ||
+            shape === 'paper_hyperboloid' ||
+            shape === 'stepped_crown' ||
+            shape === 'trapezoid_prism' ||
+            shape === 'arch_portal' ||
+            shape === 'chamfered_octagonal_prism' ||
+            shape === 'circle_slab' ||
+            shape === 'triangle_slab' ||
+            shape === 'pentagon_slab' ||
+            shape === 'hexagon_slab' ||
+            shape === 'octagon_slab' ||
+            shape === 'semicircle_slab' ||
+            shape === 'trapezoid_slab'
+          ) {
+            if (absY > 0.6) {
+              detectedFace = localNormal.y > 0 ? 'top' : 'bottom';
+            } else {
+              detectedFace = 'side';
+            }
+          } else if (shape === 'cone_spire' || shape === 'pyramid_spire') {
+            if (localNormal.y < -0.6) {
+              detectedFace = 'bottom';
+            } else {
+              detectedFace = 'side';
+            }
+          } else if (shape === 'paper_sphere' || shape === 'paper_torus') {
+            detectedFace = localNormal.y > 0 ? 'top' : 'bottom';
+          } else if (
+            shape === 'triangle_wedge' ||
+            shape === 'flat_triangle' ||
+            shape === 'pitched_roof' ||
+            shape === 'l_fold_wall'
+          ) {
+            if (absZ > 0.6) {
+              detectedFace = 'front';
+            } else {
+              detectedFace = 'side';
+            }
+          } else {
+            if (absY > 0.6) {
+              detectedFace = localNormal.y > 0 ? 'top' : 'bottom';
+            } else if (absZ > 0.6) {
+              detectedFace = localNormal.z > 0 ? 'front' : 'back';
+            } else {
+              detectedFace = 'side';
+            }
+          }
+
+          setSelectedFaceKey(detectedFace);
+        }
       }
     }
   };
@@ -836,24 +1019,31 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
   // Add Component to current building
   const handleAddComponent = (shape: ComponentShape) => {
     const existingCount = currentBuilding.components.length;
-    let newY = 1.0;
+    const isSlab = shape.endsWith('_slab');
+    const shapeScale: [number, number, number] = isSlab 
+      ? [3.2, 0.25, 3.2] 
+      : (shape === 'square_paper' || shape === 'paper_sheet' || shape === 'flat_triangle')
+      ? [2.5, 0.08, 2.5]
+      : [2.5, 2.0, 2.5];
+
+    let newY = shapeScale[1] / 2;
     if (existingCount > 0) {
       const topComp = currentBuilding.components.reduce((prev, curr) =>
         curr.position[1] + curr.scale[1] / 2 > prev.position[1] + prev.scale[1] / 2 ? curr : prev
       );
-      newY = topComp.position[1] + topComp.scale[1] / 2 + 1.2;
+      newY = topComp.position[1] + topComp.scale[1] / 2 + shapeScale[1] / 2;
     }
 
     const newId = `comp_${Date.now()}`;
     const newComponent: PaperComponent = {
       id: newId,
-      name: `${shape.replace(/_/g, ' ')} #${existingCount + 1}`,
+      name: `${shape.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())} #${existingCount + 1}`,
       shape: shape,
       position: [0, newY, 0],
       rotation: [0, 0, 0],
-      scale: [2.5, 2.0, 2.5],
+      scale: shapeScale,
       materialConfig: PRESET_MATERIALS[existingCount % PRESET_MATERIALS.length],
-      thickness: 1.0,
+      thickness: isSlab ? 1.5 : 1.0,
       bendAngle: 0,
       bendAxis: 'x',
       visible: true,
@@ -862,7 +1052,8 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
     const nextComps = [...currentBuilding.components, newComponent];
     const maxHeight = Math.max(...nextComps.map((c) => c.position[1] + c.scale[1] / 2), 2) * 4;
 
-    pushHistory(nextComps);
+    const shapeLabel = shape.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    pushHistory(nextComps, `Add ${shapeLabel}`, false);
     onUpdateBuilding({
       ...currentBuilding,
       components: nextComps,
@@ -872,12 +1063,16 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
   };
 
   // Update selected component
-  const updateSelectedComp = (updater: (comp: PaperComponent) => PaperComponent) => {
+  const updateSelectedComp = (
+    updater: (comp: PaperComponent) => PaperComponent,
+    actionLabel: string = 'Modify Component',
+    isContinuous: boolean = false
+  ) => {
     if (!selectedCompId) return;
     const nextComponents = currentBuilding.components.map((c) => (c.id === selectedCompId ? updater(c) : c));
     const maxHeight = Math.max(...nextComponents.map((c) => c.position[1] + c.scale[1] / 2), 2) * 4;
 
-    pushHistory(nextComponents);
+    pushHistory(nextComponents, actionLabel, isContinuous);
     onUpdateBuilding({
       ...currentBuilding,
       components: nextComponents,
@@ -901,7 +1096,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
     const nextComps = [...currentBuilding.components, dupComp];
     const maxHeight = Math.max(...nextComps.map((c) => c.position[1] + c.scale[1] / 2), 2) * 4;
 
-    pushHistory(nextComps);
+    pushHistory(nextComps, `Duplicate ${comp.name}`, false);
     onUpdateBuilding({
       ...currentBuilding,
       components: nextComps,
@@ -913,12 +1108,13 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
   // Delete Selected Component
   const handleDeleteSelected = () => {
     if (!selectedCompId || currentBuilding.components.length === 0) return;
+    const compToDelete = currentBuilding.components.find((c) => c.id === selectedCompId);
     const nextComponents = currentBuilding.components.filter((c) => c.id !== selectedCompId);
     const maxHeight = nextComponents.length > 0 
       ? Math.max(...nextComponents.map((c) => c.position[1] + c.scale[1] / 2), 2) * 4
       : 0;
 
-    pushHistory(nextComponents);
+    pushHistory(nextComponents, `Delete ${compToDelete?.name || 'Component'}`, false);
     onUpdateBuilding({
       ...currentBuilding,
       components: nextComponents,
@@ -927,103 +1123,202 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
     setSelectedCompId(nextComponents[0]?.id || null);
   };
 
+  // Toggle visibility of any component by ID (with history)
+  const handleToggleComponentVisibility = (compId: string) => {
+    const target = currentBuilding.components.find((c) => c.id === compId);
+    if (!target) return;
+    const isNowVisible = target.visible === false;
+    const nextComponents = currentBuilding.components.map((c) =>
+      c.id === compId ? { ...c, visible: isNowVisible } : c
+    );
+    const actionLabel = `${isNowVisible ? 'Show' : 'Hide'} ${target.name}`;
+    pushHistory(nextComponents, actionLabel, false);
+    onUpdateBuilding({
+      ...currentBuilding,
+      components: nextComponents,
+    });
+  };
+
+  // Duplicate specific component by ID (e.g. from Outliner)
+  const handleDuplicateComponentById = (compId: string) => {
+    const comp = currentBuilding.components.find((c) => c.id === compId);
+    if (!comp) return;
+
+    const dupId = `comp_${Date.now()}`;
+    const dupComp: PaperComponent = {
+      ...JSON.parse(JSON.stringify(comp)),
+      id: dupId,
+      name: `${comp.name} Copy`,
+      position: [comp.position[0], comp.position[1] + comp.scale[1], comp.position[2]],
+    };
+
+    const nextComps = [...currentBuilding.components, dupComp];
+    const maxHeight = Math.max(...nextComps.map((c) => c.position[1] + c.scale[1] / 2), 2) * 4;
+
+    pushHistory(nextComps, `Duplicate ${comp.name}`, false);
+    onUpdateBuilding({
+      ...currentBuilding,
+      components: nextComps,
+      heightMeters: Math.round(maxHeight),
+    });
+    setSelectedCompId(dupId);
+  };
+
+  // Delete specific component by ID (e.g. from Outliner)
+  const handleDeleteComponentById = (compId: string) => {
+    const compToDelete = currentBuilding.components.find((c) => c.id === compId);
+    if (!compToDelete) return;
+
+    const nextComponents = currentBuilding.components.filter((c) => c.id !== compId);
+    const maxHeight = nextComponents.length > 0 
+      ? Math.max(...nextComponents.map((c) => c.position[1] + c.scale[1] / 2), 2) * 4
+      : 0;
+
+    pushHistory(nextComponents, `Delete ${compToDelete.name}`, false);
+    onUpdateBuilding({
+      ...currentBuilding,
+      components: nextComponents,
+      heightMeters: Math.round(maxHeight),
+    });
+    if (selectedCompId === compId) {
+      setSelectedCompId(nextComponents[0]?.id || null);
+    }
+  };
+
   // Quick nudge selected component position by delta
   const handleNudgeSelectedComp = (dx: number, dy: number, dz: number) => {
     if (!selectedCompId) return;
-    updateSelectedComp((c) => ({
-      ...c,
-      position: [
-        Math.round((c.position[0] + dx) * 10) / 10,
-        Math.max(0, Math.round((c.position[1] + dy) * 10) / 10),
-        Math.round((c.position[2] + dz) * 10) / 10,
-      ],
-    }));
+    updateSelectedComp(
+      (c) => ({
+        ...c,
+        position: [
+          Math.round((c.position[0] + dx) * 10) / 10,
+          Math.max(0, Math.round((c.position[1] + dy) * 10) / 10),
+          Math.round((c.position[2] + dz) * 10) / 10,
+        ],
+      }),
+      'Nudge Position',
+      false
+    );
   };
 
   // Rotate selected component on X, Y, or Z axis
   const handleRotateAxis = (axis: 'x' | 'y' | 'z', dAngle: number) => {
     if (!selectedCompId) return;
-    updateSelectedComp((c) => {
-      const idx = axis === 'x' ? 0 : axis === 'y' ? 1 : 2;
-      const rot = [...c.rotation] as [number, number, number];
-      rot[idx] = (rot[idx] + dAngle) % (Math.PI * 2);
-      return {
-        ...c,
-        rotation: rot,
-      };
-    });
+    const deg = Math.round((dAngle * 180) / Math.PI);
+    updateSelectedComp(
+      (c) => {
+        const idx = axis === 'x' ? 0 : axis === 'y' ? 1 : 2;
+        const rot = [...c.rotation] as [number, number, number];
+        rot[idx] = (rot[idx] + dAngle) % (Math.PI * 2);
+        return {
+          ...c,
+          rotation: rot,
+        };
+      },
+      `Rotate ${axis.toUpperCase()} ${deg > 0 ? '+' : ''}${deg}°`,
+      false
+    );
   };
 
   const handleSetRotationDegrees = (axis: 'x' | 'y' | 'z', degrees: number) => {
     if (!selectedCompId) return;
     const rad = (degrees * Math.PI) / 180;
-    updateSelectedComp((c) => {
-      const idx = axis === 'x' ? 0 : axis === 'y' ? 1 : 2;
-      const rot = [...c.rotation] as [number, number, number];
-      rot[idx] = rad;
-      return {
-        ...c,
-        rotation: rot,
-      };
-    });
+    updateSelectedComp(
+      (c) => {
+        const idx = axis === 'x' ? 0 : axis === 'y' ? 1 : 2;
+        const rot = [...c.rotation] as [number, number, number];
+        rot[idx] = rad;
+        return {
+          ...c,
+          rotation: rot,
+        };
+      },
+      `Set Rotation ${axis.toUpperCase()} ${degrees}°`,
+      true
+    );
   };
 
   const handleResetRotation = () => {
     if (!selectedCompId) return;
-    updateSelectedComp((c) => ({
-      ...c,
-      rotation: [0, 0, 0],
-    }));
+    updateSelectedComp(
+      (c) => ({
+        ...c,
+        rotation: [0, 0, 0],
+      }),
+      'Reset Rotation',
+      false
+    );
   };
 
   // Geometry Bending & Curvature handlers
   const handleSetBendAngle = (degrees: number) => {
     if (!selectedCompId) return;
     const clamped = Math.max(-180, Math.min(180, Math.round(degrees)));
-    updateSelectedComp((c) => ({
-      ...c,
-      bendAngle: clamped,
-    }));
+    updateSelectedComp(
+      (c) => ({
+        ...c,
+        bendAngle: clamped,
+      }),
+      `Set Bend ${clamped}°`,
+      true
+    );
   };
 
   const handleNudgeBend = (deltaDeg: number) => {
     if (!selectedCompId) return;
-    updateSelectedComp((c) => {
-      const curr = c.bendAngle || 0;
-      const next = Math.max(-180, Math.min(180, Math.round(curr + deltaDeg)));
-      return {
-        ...c,
-        bendAngle: next,
-      };
-    });
+    updateSelectedComp(
+      (c) => {
+        const curr = c.bendAngle || 0;
+        const next = Math.max(-180, Math.min(180, Math.round(curr + deltaDeg)));
+        return {
+          ...c,
+          bendAngle: next,
+        };
+      },
+      `Bend ${deltaDeg > 0 ? '+' : ''}${deltaDeg}°`,
+      false
+    );
   };
 
   const handleSetBendAxis = (axis: 'x' | 'y' | 'z') => {
     if (!selectedCompId) return;
-    updateSelectedComp((c) => ({
-      ...c,
-      bendAxis: axis,
-    }));
+    updateSelectedComp(
+      (c) => ({
+        ...c,
+        bendAxis: axis,
+      }),
+      `Set Bend Axis ${axis.toUpperCase()}`,
+      false
+    );
   };
 
   const handleToggleBendAxis = () => {
     if (!selectedCompId) return;
-    updateSelectedComp((c) => {
-      const curr = c.bendAxis || 'x';
-      const nextAxis: 'x' | 'y' | 'z' = curr === 'x' ? 'y' : curr === 'y' ? 'z' : 'x';
-      return {
-        ...c,
-        bendAxis: nextAxis,
-      };
-    });
+    updateSelectedComp(
+      (c) => {
+        const curr = c.bendAxis || 'x';
+        const nextAxis: 'x' | 'y' | 'z' = curr === 'x' ? 'y' : curr === 'y' ? 'z' : 'x';
+        return {
+          ...c,
+          bendAxis: nextAxis,
+        };
+      },
+      'Toggle Bend Axis',
+      false
+    );
   };
 
   const handleResetBend = () => {
     if (!selectedCompId) return;
-    updateSelectedComp((c) => ({
-      ...c,
-      bendAngle: 0,
-    }));
+    updateSelectedComp(
+      (c) => ({
+        ...c,
+        bendAngle: 0,
+      }),
+      'Reset Bend',
+      false
+    );
   };
 
   // Comprehensive keyboard shortcuts & viewport navigation listener
@@ -1155,7 +1450,22 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentBuilding, canUndo, canRedo, selectedCompId, interactionTool]);
 
-  // Upload custom paper/material texture map
+  // Helper to obtain the active material configuration for the selected face
+  const getActiveFaceConfig = (comp: PaperComponent): PaperMaterialConfig => {
+    if (selectedFaceKey === 'all' || !comp.faceMaterials) {
+      return comp.materialConfig;
+    }
+    const faceKey = selectedFaceKey as keyof FaceMaterialsConfig;
+    return comp.faceMaterials[faceKey] || comp.materialConfig;
+  };
+
+  const isCurrentFaceOverridden = (comp: PaperComponent): boolean => {
+    if (selectedFaceKey === 'all' || !comp.faceMaterials) return false;
+    const faceKey = selectedFaceKey as keyof FaceMaterialsConfig;
+    return Boolean(comp.faceMaterials[faceKey]?.textureUrl);
+  };
+
+  // Upload custom paper/material texture map (to ALL or currently selected face)
   const handleTextureUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1184,7 +1494,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
           thickness: 1.5,
         };
         const nextComps = [newComponent];
-        pushHistory(nextComps);
+        pushHistory(nextComps, 'Create Custom Textured Block', false);
         onUpdateBuilding({
           ...currentBuilding,
           components: nextComps,
@@ -1197,15 +1507,38 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
         return;
       }
 
-      updateSelectedComp((c) => ({
-        ...c,
-        materialConfig: {
-          ...c.materialConfig,
-          textureUrl: url,
-          repeat: c.materialConfig.repeat || [1, 1],
-        },
-      }));
-      setSaveSuccessMessage('Applied custom texture image!');
+      updateSelectedComp((c) => {
+        if (selectedFaceKey === 'all') {
+          return {
+            ...c,
+            materialConfig: {
+              ...c.materialConfig,
+              textureUrl: url,
+              repeat: c.materialConfig.repeat || [1, 1],
+            },
+            faceMaterials: undefined, // Reset individual face overrides so whole model gets uniform texture
+          };
+        } else {
+          const faceKey = selectedFaceKey as keyof FaceMaterialsConfig;
+          const currentFace = c.faceMaterials?.[faceKey] || { ...c.materialConfig };
+          return {
+            ...c,
+            faceMaterials: {
+              ...(c.faceMaterials || {}),
+              [faceKey]: {
+                ...currentFace,
+                textureUrl: url,
+                repeat: currentFace.repeat || [1, 1],
+              },
+            },
+          };
+        }
+      }, selectedFaceKey === 'all' ? 'Upload Texture (All Faces)' : `Upload Texture (${selectedFaceKey})`, false);
+      setSaveSuccessMessage(
+        selectedFaceKey === 'all'
+          ? 'Applied custom texture to ALL faces!'
+          : `Applied custom texture to [${selectedFaceKey.toUpperCase()}] face!`
+      );
       setSaveSuccessNotice(true);
       setTimeout(() => setSaveSuccessNotice(false), 2500);
     };
@@ -1213,21 +1546,49 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
     e.target.value = '';
   };
 
-  // Clear / remove texture map
+  // Clear / remove texture map for selected face or all faces
   const handleRemoveTexture = () => {
-    updateSelectedComp((c) => ({
-      ...c,
-      materialConfig: {
-        ...c.materialConfig,
-        textureUrl: '',
-      },
-    }));
-    setSaveSuccessMessage('Removed texture (clean paper)!');
+    updateSelectedComp((c) => {
+      if (selectedFaceKey === 'all') {
+        return {
+          ...c,
+          materialConfig: {
+            ...c.materialConfig,
+            textureUrl: '',
+          },
+          faceMaterials: undefined,
+        };
+      } else {
+        const faceKey = selectedFaceKey as keyof FaceMaterialsConfig;
+        const nextFaceMats = { ...(c.faceMaterials || {}) };
+        delete nextFaceMats[faceKey];
+        return {
+          ...c,
+          faceMaterials: Object.keys(nextFaceMats).length > 0 ? nextFaceMats : undefined,
+        };
+      }
+    }, selectedFaceKey === 'all' ? 'Remove Texture (All Faces)' : `Remove Texture (${selectedFaceKey})`, false);
+    setSaveSuccessMessage(
+      selectedFaceKey === 'all'
+        ? 'Removed texture from ALL faces (clean cardstock)!'
+        : `Removed texture from [${selectedFaceKey.toUpperCase()}] face (reverted to base paper)!`
+    );
     setSaveSuccessNotice(true);
     setTimeout(() => setSaveSuccessNotice(false), 2000);
   };
 
-  // Apply a preset texture to selected component (or first component if none selected, or create block if blank)
+  // Reset all individual face texture overrides back to uniform base material
+  const handleResetAllFaceTextures = () => {
+    updateSelectedComp((c) => ({
+      ...c,
+      faceMaterials: undefined,
+    }), 'Reset Face Overrides', false);
+    setSaveSuccessMessage('Reset all face textures! Restored uniform cardstock.');
+    setSaveSuccessNotice(true);
+    setTimeout(() => setSaveSuccessNotice(false), 2000);
+  };
+
+  // Apply a preset texture to selected component (or first component if none selected)
   const handleApplyPresetTexture = (preset: TexturePresetItem) => {
     const url = preset.getUrl();
 
@@ -1250,7 +1611,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
         thickness: 1.5,
       };
       const nextComps = [newComponent];
-      pushHistory(nextComps);
+      pushHistory(nextComps, `Add ${preset.name} Block`, false);
       onUpdateBuilding({
         ...currentBuilding,
         components: nextComps,
@@ -1272,25 +1633,157 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
 
     const nextComponents = currentBuilding.components.map((c) => {
       if (c.id === targetCompId) {
-        return {
-          ...c,
-          materialConfig: {
-            ...c.materialConfig,
-            textureUrl: url,
-            repeat: preset.defaultRepeat,
-            roughness: preset.defaultRoughness,
-          },
-        };
+        if (selectedFaceKey === 'all') {
+          return {
+            ...c,
+            materialConfig: {
+              ...c.materialConfig,
+              textureUrl: url,
+              repeat: preset.defaultRepeat,
+              roughness: preset.defaultRoughness,
+            },
+            faceMaterials: undefined, // Clear face overrides so all 6 faces receive preset uniformly
+          };
+        } else {
+          const faceKey = selectedFaceKey as keyof FaceMaterialsConfig;
+          const currentFace = c.faceMaterials?.[faceKey] || { ...c.materialConfig };
+          return {
+            ...c,
+            faceMaterials: {
+              ...(c.faceMaterials || {}),
+              [faceKey]: {
+                ...currentFace,
+                textureUrl: url,
+                repeat: preset.defaultRepeat,
+                roughness: preset.defaultRoughness,
+              },
+            },
+          };
+        }
       }
       return c;
     });
 
-    pushHistory(nextComponents);
+    const actionText = selectedFaceKey === 'all'
+      ? `Apply Texture: ${preset.name}`
+      : `Apply Texture: ${preset.name} (${selectedFaceKey})`;
+    pushHistory(nextComponents, actionText, false);
     onUpdateBuilding({
       ...currentBuilding,
       components: nextComponents,
     });
-    setSaveSuccessMessage(`Applied "${preset.name}" texture!`);
+    setSaveSuccessMessage(
+      selectedFaceKey === 'all'
+        ? `Applied "${preset.name}" to ALL faces!`
+        : `Applied "${preset.name}" to [${selectedFaceKey.toUpperCase()}] face!`
+    );
+    setSaveSuccessNotice(true);
+    setTimeout(() => setSaveSuccessNotice(false), 2000);
+  };
+
+  // Adjust UV tile repeat for currently selected face (or all faces)
+  const handleUpdateFaceRepeat = (axis: 0 | 1, val: number) => {
+    updateSelectedComp((c) => {
+      if (selectedFaceKey === 'all') {
+        const rep = c.materialConfig.repeat || [1, 1];
+        return {
+          ...c,
+          materialConfig: {
+            ...c.materialConfig,
+            repeat: [axis === 0 ? val : rep[0], axis === 1 ? val : rep[1]],
+          },
+        };
+      } else {
+        const faceKey = selectedFaceKey as keyof FaceMaterialsConfig;
+        const currentFace = c.faceMaterials?.[faceKey] || { ...c.materialConfig };
+        const rep = currentFace.repeat || [1, 1];
+        return {
+          ...c,
+          faceMaterials: {
+            ...(c.faceMaterials || {}),
+            [faceKey]: {
+              ...currentFace,
+              repeat: [axis === 0 ? val : rep[0], axis === 1 ? val : rep[1]],
+            },
+          },
+        };
+      }
+    }, 'Adjust UV Repeat', true);
+  };
+
+  // Adjust tint color for currently selected face (or all faces)
+  const handleUpdateFaceColor = (color: string) => {
+    updateSelectedComp((c) => {
+      if (selectedFaceKey === 'all') {
+        return {
+          ...c,
+          materialConfig: {
+            ...c.materialConfig,
+            color: color,
+          },
+        };
+      } else {
+        const faceKey = selectedFaceKey as keyof FaceMaterialsConfig;
+        const currentFace = c.faceMaterials?.[faceKey] || { ...c.materialConfig };
+        return {
+          ...c,
+          faceMaterials: {
+            ...(c.faceMaterials || {}),
+            [faceKey]: {
+              ...currentFace,
+              color: color,
+            },
+          },
+        };
+      }
+    }, 'Adjust Face Color', true);
+  };
+
+  // Adjust roughness for currently selected face (or all faces)
+  const handleUpdateFaceRoughness = (roughness: number) => {
+    updateSelectedComp((c) => {
+      if (selectedFaceKey === 'all') {
+        return {
+          ...c,
+          materialConfig: {
+            ...c.materialConfig,
+            roughness: roughness,
+          },
+        };
+      } else {
+        const faceKey = selectedFaceKey as keyof FaceMaterialsConfig;
+        const currentFace = c.faceMaterials?.[faceKey] || { ...c.materialConfig };
+        return {
+          ...c,
+          faceMaterials: {
+            ...(c.faceMaterials || {}),
+            [faceKey]: {
+              ...currentFace,
+              roughness: roughness,
+            },
+          },
+        };
+      }
+    }, 'Adjust Face Roughness', true);
+  };
+
+  // Copy current face texture settings across all other faces of the component
+  const handleCopyFaceTextureToAllFaces = () => {
+    if (!selectedComp) return;
+    const activeFaceMat = getActiveFaceConfig(selectedComp);
+    updateSelectedComp((c) => ({
+      ...c,
+      materialConfig: {
+        ...c.materialConfig,
+        textureUrl: activeFaceMat.textureUrl,
+        repeat: activeFaceMat.repeat,
+        roughness: activeFaceMat.roughness,
+        color: activeFaceMat.color,
+      },
+      faceMaterials: undefined,
+    }), 'Copy Face Texture to All Faces', false);
+    setSelectedFaceKey('all');
+    setSaveSuccessMessage('Copied texture across ALL faces!');
     setSaveSuccessNotice(true);
     setTimeout(() => setSaveSuccessNotice(false), 2000);
   };
@@ -1298,11 +1791,12 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
   // Apply current or specific texture to ALL components in building
   const handleApplyTextureToAll = (textureUrl?: string, repeat?: [number, number], roughness?: number) => {
     if (currentBuilding.components.length === 0) return;
+    const activeConfig = selectedComp ? getActiveFaceConfig(selectedComp) : undefined;
     const targetUrl = textureUrl !== undefined 
       ? textureUrl 
-      : (selectedComp?.materialConfig.textureUrl || '');
-    const targetRepeat = repeat || selectedComp?.materialConfig.repeat || [1, 1];
-    const targetRoughness = roughness !== undefined ? roughness : (selectedComp?.materialConfig.roughness || 0.85);
+      : (activeConfig?.textureUrl || '');
+    const targetRepeat = repeat || activeConfig?.repeat || [1, 1];
+    const targetRoughness = roughness !== undefined ? roughness : (activeConfig?.roughness || 0.85);
 
     const nextComponents = currentBuilding.components.map((c) => ({
       ...c,
@@ -1312,9 +1806,10 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
         repeat: targetRepeat,
         roughness: targetRoughness,
       },
+      faceMaterials: undefined, // Uniform across all components
     }));
 
-    pushHistory(nextComponents);
+    pushHistory(nextComponents, targetUrl ? 'Apply Texture Across All Components' : 'Clear Textures Across All Components', false);
     onUpdateBuilding({
       ...currentBuilding,
       components: nextComponents,
@@ -1801,23 +2296,184 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
               <div className="text-[10px] text-neutral-500 dark:text-neutral-400 truncate">Ruled hourglass tower</div>
             </div>
           </button>
+
+          {/* ARCHITECTURAL SLABS & PODIUMS */}
+          <div className="text-[10px] font-bold px-1.5 pt-3 pb-0.5 uppercase tracking-wider text-ry-gradient flex items-center justify-between">
+            <span>SLABS &amp; PODIUMS</span>
+            <span className="text-[9px] px-1 py-0.2 bg-ry-gradient text-white font-mono">NEW</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => handleAddComponent('triangle_slab')}
+            className="w-full flex items-center gap-2 p-2 border border-neutral-200 dark:border-neutral-800/80 bg-neutral-50/70 dark:bg-[#141926]/70 hover:border-amber-500/60 dark:hover:border-amber-500/60 hover:bg-neutral-100/60 dark:hover:bg-[#1a2133] text-left transition-colors group cursor-pointer"
+          >
+            <div className="w-6 h-6 bg-neutral-200 dark:bg-neutral-800 group-hover:bg-gradient-to-br group-hover:from-red-500 group-hover:to-yellow-400 group-hover:text-white flex items-center justify-center font-bold text-xs transition-colors">
+              <span>△</span>
+            </div>
+            <div className="truncate">
+              <div className="font-semibold text-neutral-900 dark:text-neutral-100 text-xs">Triangle Slab</div>
+              <div className="text-[10px] text-neutral-500 dark:text-neutral-400 truncate">3-sided triangular floor plate</div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleAddComponent('circle_slab')}
+            className="w-full flex items-center gap-2 p-2 border border-neutral-200 dark:border-neutral-800/80 bg-neutral-50/70 dark:bg-[#141926]/70 hover:border-amber-500/60 dark:hover:border-amber-500/60 hover:bg-neutral-100/60 dark:hover:bg-[#1a2133] text-left transition-colors group cursor-pointer"
+          >
+            <div className="w-6 h-6 bg-neutral-200 dark:bg-neutral-800 group-hover:bg-gradient-to-br group-hover:from-red-500 group-hover:to-yellow-400 group-hover:text-white flex items-center justify-center font-bold text-xs transition-colors">
+              <span>○</span>
+            </div>
+            <div className="truncate">
+              <div className="font-semibold text-neutral-900 dark:text-neutral-100 text-xs">Circle Slab</div>
+              <div className="text-[10px] text-neutral-500 dark:text-neutral-400 truncate">Circular round disc deck</div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleAddComponent('square_slab')}
+            className="w-full flex items-center gap-2 p-2 border border-neutral-200 dark:border-neutral-800/80 bg-neutral-50/70 dark:bg-[#141926]/70 hover:border-amber-500/60 dark:hover:border-amber-500/60 hover:bg-neutral-100/60 dark:hover:bg-[#1a2133] text-left transition-colors group cursor-pointer"
+          >
+            <div className="w-6 h-6 bg-neutral-200 dark:bg-neutral-800 group-hover:bg-gradient-to-br group-hover:from-red-500 group-hover:to-yellow-400 group-hover:text-white flex items-center justify-center text-neutral-700 dark:text-neutral-300 transition-colors">
+              <Box className="w-3.5 h-3.5" />
+            </div>
+            <div className="truncate">
+              <div className="font-semibold text-neutral-900 dark:text-neutral-100 text-xs">Square Slab</div>
+              <div className="text-[10px] text-neutral-500 dark:text-neutral-400 truncate">4-sided square plinth plate</div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleAddComponent('pentagon_slab')}
+            className="w-full flex items-center gap-2 p-2 border border-neutral-200 dark:border-neutral-800/80 bg-neutral-50/70 dark:bg-[#141926]/70 hover:border-amber-500/60 dark:hover:border-amber-500/60 hover:bg-neutral-100/60 dark:hover:bg-[#1a2133] text-left transition-colors group cursor-pointer"
+          >
+            <div className="w-6 h-6 bg-neutral-200 dark:bg-neutral-800 group-hover:bg-gradient-to-br group-hover:from-red-500 group-hover:to-yellow-400 group-hover:text-white flex items-center justify-center font-bold text-xs transition-colors">
+              <span>⬟</span>
+            </div>
+            <div className="truncate">
+              <div className="font-semibold text-neutral-900 dark:text-neutral-100 text-xs">Pentagon Slab</div>
+              <div className="text-[10px] text-neutral-500 dark:text-neutral-400 truncate">5-sided regular pentagon plate</div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleAddComponent('hexagon_slab')}
+            className="w-full flex items-center gap-2 p-2 border border-neutral-200 dark:border-neutral-800/80 bg-neutral-50/70 dark:bg-[#141926]/70 hover:border-amber-500/60 dark:hover:border-amber-500/60 hover:bg-neutral-100/60 dark:hover:bg-[#1a2133] text-left transition-colors group cursor-pointer"
+          >
+            <div className="w-6 h-6 bg-neutral-200 dark:bg-neutral-800 group-hover:bg-gradient-to-br group-hover:from-red-500 group-hover:to-yellow-400 group-hover:text-white flex items-center justify-center font-bold text-xs transition-colors">
+              <span>⬡</span>
+            </div>
+            <div className="truncate">
+              <div className="font-semibold text-neutral-900 dark:text-neutral-100 text-xs">Hexagon Slab</div>
+              <div className="text-[10px] text-neutral-500 dark:text-neutral-400 truncate">6-sided honeycomb terrace slab</div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleAddComponent('octagon_slab')}
+            className="w-full flex items-center gap-2 p-2 border border-neutral-200 dark:border-neutral-800/80 bg-neutral-50/70 dark:bg-[#141926]/70 hover:border-amber-500/60 dark:hover:border-amber-500/60 hover:bg-neutral-100/60 dark:hover:bg-[#1a2133] text-left transition-colors group cursor-pointer"
+          >
+            <div className="w-6 h-6 bg-neutral-200 dark:bg-neutral-800 group-hover:bg-gradient-to-br group-hover:from-red-500 group-hover:to-yellow-400 group-hover:text-white flex items-center justify-center font-bold text-xs transition-colors">
+              <span>⯃</span>
+            </div>
+            <div className="truncate">
+              <div className="font-semibold text-neutral-900 dark:text-neutral-100 text-xs">Octagon Slab</div>
+              <div className="text-[10px] text-neutral-500 dark:text-neutral-400 truncate">8-sided gazebo podium slab</div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleAddComponent('semicircle_slab')}
+            className="w-full flex items-center gap-2 p-2 border border-neutral-200 dark:border-neutral-800/80 bg-neutral-50/70 dark:bg-[#141926]/70 hover:border-amber-500/60 dark:hover:border-amber-500/60 hover:bg-neutral-100/60 dark:hover:bg-[#1a2133] text-left transition-colors group cursor-pointer"
+          >
+            <div className="w-6 h-6 bg-neutral-200 dark:bg-neutral-800 group-hover:bg-gradient-to-br group-hover:from-red-500 group-hover:to-yellow-400 group-hover:text-white flex items-center justify-center font-bold text-xs transition-colors">
+              <span>◗</span>
+            </div>
+            <div className="truncate">
+              <div className="font-semibold text-neutral-900 dark:text-neutral-100 text-xs">Semicircle Slab</div>
+              <div className="text-[10px] text-neutral-500 dark:text-neutral-400 truncate">Half-circle / D-shaped balcony slab</div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleAddComponent('trapezoid_slab')}
+            className="w-full flex items-center gap-2 p-2 border border-neutral-200 dark:border-neutral-800/80 bg-neutral-50/70 dark:bg-[#141926]/70 hover:border-amber-500/60 dark:hover:border-amber-500/60 hover:bg-neutral-100/60 dark:hover:bg-[#1a2133] text-left transition-colors group cursor-pointer"
+          >
+            <div className="w-6 h-6 bg-neutral-200 dark:bg-neutral-800 group-hover:bg-gradient-to-br group-hover:from-red-500 group-hover:to-yellow-400 group-hover:text-white flex items-center justify-center font-bold text-xs transition-colors">
+              <span>⏢</span>
+            </div>
+            <div className="truncate">
+              <div className="font-semibold text-neutral-900 dark:text-neutral-100 text-xs">Trapezoid Slab</div>
+              <div className="text-[10px] text-neutral-500 dark:text-neutral-400 truncate">Tapered cantilever plate slab</div>
+            </div>
+          </button>
           </>
           )}
         </div>
 
-        {/* Building Stats Summary */}
-        <div className="p-3 border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#0e121b] text-xs">
-          <div className="flex justify-between text-neutral-500 dark:text-neutral-400 mb-1">
-            <span className="font-semibold text-ry-gradient">Height:</span>
-            <span className="text-ry-gradient font-mono font-bold tabular-nums">{currentBuilding.heightMeters} m</span>
+        {/* Building Stats Summary & Device Project Saving */}
+        <div className="p-2.5 border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#0e121b] text-xs space-y-2">
+          <div className="flex justify-between items-center text-neutral-500 dark:text-neutral-400">
+            <div className="flex items-center gap-1.5">
+              <span className="font-semibold text-ry-gradient">Height:</span>
+              <span className="text-ry-gradient font-mono font-bold tabular-nums">{currentBuilding.heightMeters} m</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="font-semibold text-ry-gradient">Parts:</span>
+              <span className="text-ry-gradient font-mono font-bold tabular-nums">{currentBuilding.components.length}</span>
+            </div>
           </div>
-          <div className="flex justify-between text-neutral-500 dark:text-neutral-400 mb-1">
-            <span className="font-semibold text-ry-gradient">Components:</span>
-            <span className="text-ry-gradient font-mono font-bold tabular-nums">{currentBuilding.components.length}</span>
-          </div>
-          <div className="flex justify-between text-neutral-500 dark:text-neutral-400">
-            <span className="font-semibold text-ry-gradient">Resilience:</span>
-            <span className="text-ry-gradient font-mono font-bold tabular-nums">{currentBuilding.resilienceScore}%</span>
+
+          {/* Device Saving & Finish Unfinished Buildings Controls */}
+          <div className="pt-2 border-t border-neutral-200 dark:border-neutral-800 space-y-1.5">
+            <div className="flex items-center justify-between text-[10px]">
+              <div className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span>Auto-saved to device</span>
+              </div>
+              <span className="font-mono text-[9px] text-neutral-400">Local draft</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onOpenDeviceProjects) {
+                    onOpenDeviceProjects('save');
+                  } else {
+                    exportBuildingToDeviceFile(currentBuilding);
+                  }
+                }}
+                className="py-1 px-1.5 bg-ry-gradient text-white font-semibold text-[11px] flex items-center justify-center gap-1 shadow-xs hover:brightness-105 active:scale-[0.98] transition-all cursor-pointer"
+                title="Save current building to your device as a file (.paper) or local draft"
+              >
+                <Save className="w-3 h-3 shrink-0" />
+                <span className="truncate">Save to Device</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (onOpenDeviceProjects) {
+                    onOpenDeviceProjects('saved');
+                  } else {
+                    handleOpenSaveModal();
+                  }
+                }}
+                className="py-1 px-1.5 border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#141926] hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 font-semibold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                title="Finish your unfinished buildings and resume saved drafts"
+              >
+                <HardDrive className="w-3 h-3 text-amber-500 shrink-0" />
+                <span className="truncate">Finish Later</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1936,32 +2592,109 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
               </button>
             </div>
 
-            {/* Undo / Redo */}
-            <div className="flex items-center bg-neutral-50 dark:bg-[#141926] border border-neutral-200 dark:border-neutral-800">
+            {/* History State Manager (Undo / Redo & Timeline Dropdown) */}
+            <div ref={historyDropdownRef} className="relative flex items-center bg-neutral-50 dark:bg-[#141926] border border-neutral-200 dark:border-neutral-800">
               <button
                 onClick={handleUndo}
                 disabled={!canUndo}
                 className={`flex items-center gap-1 px-2 py-1 text-[11px] border-r border-neutral-200 dark:border-neutral-800 transition-colors ${
                   canUndo
-                    ? 'text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer'
+                    ? 'text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer hover:text-amber-600 dark:hover:text-amber-400'
                     : 'text-neutral-300 dark:text-neutral-600 cursor-not-allowed'
                 }`}
-                title="Undo (Ctrl+Z)"
+                title={canUndo ? `Undo: ${historyManagerRef.current?.undoAction} (Ctrl+Z / ⌘Z)` : 'Undo (Ctrl+Z / ⌘Z)'}
               >
                 <Undo2 className="w-3 h-3" />
               </button>
               <button
                 onClick={handleRedo}
                 disabled={!canRedo}
-                className={`flex items-center gap-1 px-2 py-1 text-[11px] transition-colors ${
+                className={`flex items-center gap-1 px-2 py-1 text-[11px] border-r border-neutral-200 dark:border-neutral-800 transition-colors ${
                   canRedo
-                    ? 'text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer'
+                    ? 'text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer hover:text-amber-600 dark:hover:text-amber-400'
                     : 'text-neutral-300 dark:text-neutral-600 cursor-not-allowed'
                 }`}
-                title="Redo (Ctrl+Y)"
+                title={canRedo ? `Redo: ${historyManagerRef.current?.redoAction} (Ctrl+Y / ⌘⇧Z)` : 'Redo (Ctrl+Y / ⌘⇧Z)'}
               >
                 <Redo2 className="w-3 h-3" />
               </button>
+
+              {/* History Timeline Trigger */}
+              <button
+                onClick={() => setHistoryDropdownOpen(!historyDropdownOpen)}
+                className={`flex items-center gap-1 px-2 py-1 text-[11px] font-mono transition-colors cursor-pointer ${
+                  historyDropdownOpen
+                    ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold'
+                    : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                }`}
+                title="Open Undo/Redo History Timeline"
+              >
+                <History className="w-3 h-3 text-amber-500" />
+                <span className="text-[10px] tabular-nums">
+                  {historyState.currentIndex + 1}/{historyState.entries.length}
+                </span>
+                <ChevronDown className={`w-2.5 h-2.5 transition-transform ${historyDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {/* History Timeline Dropdown Panel */}
+              {historyDropdownOpen && (
+                <div className="absolute top-full right-0 mt-1 w-64 bg-white dark:bg-[#0e121b] border border-neutral-200 dark:border-neutral-800 shadow-xl z-50 text-xs flex flex-col max-h-72 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="p-2 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#141926] flex items-center justify-between shrink-0">
+                    <div className="flex items-center gap-1.5 font-bold text-neutral-900 dark:text-white text-[11px] uppercase tracking-wider">
+                      <History className="w-3.5 h-3.5 text-amber-500" />
+                      <span>History Stack</span>
+                    </div>
+                    <span className="text-[10px] font-mono text-neutral-400">
+                      Step {historyState.currentIndex + 1} of {historyState.entries.length}
+                    </span>
+                  </div>
+
+                  <div className="overflow-y-auto flex-1 divide-y divide-neutral-100 dark:divide-neutral-800/60 p-1">
+                    {historyState.entries.map((entry, idx) => {
+                      const isCurrent = idx === historyState.currentIndex;
+                      const isFuture = idx > historyState.currentIndex;
+                      return (
+                        <button
+                          key={entry.id}
+                          type="button"
+                          onClick={() => handleJumpToHistory(idx)}
+                          className={`w-full text-left p-1.5 flex items-center justify-between text-xs transition-colors cursor-pointer ${
+                            isCurrent
+                              ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold border-l-2 border-l-amber-500'
+                              : isFuture
+                              ? 'opacity-50 hover:opacity-90 hover:bg-neutral-50 dark:hover:bg-[#141926] text-neutral-500'
+                              : 'hover:bg-neutral-50 dark:hover:bg-[#141926] text-neutral-700 dark:text-neutral-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="font-mono text-[10px] text-neutral-400 w-4 text-right shrink-0">
+                              {idx + 1}.
+                            </span>
+                            <span className="truncate">{entry.action}</span>
+                          </div>
+                          {isCurrent && (
+                            <span className="text-[9px] px-1 py-0.2 bg-amber-500 text-white font-mono font-bold shrink-0 ml-1">
+                              CURRENT
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="p-1.5 border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#141926] flex items-center justify-between text-[10px] shrink-0 text-neutral-400">
+                    <span>Ctrl+Z (Undo) · Ctrl+Y (Redo)</span>
+                    <button
+                      type="button"
+                      onClick={() => handleJumpToHistory(0)}
+                      disabled={historyState.currentIndex === 0}
+                      className="text-amber-600 dark:text-amber-400 hover:underline disabled:opacity-30 disabled:no-underline cursor-pointer font-medium"
+                    >
+                      Revert to start
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Camera View Presets */}
@@ -2034,6 +2767,21 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
           onContextMenu={(e) => e.preventDefault()}
           className="flex-1 w-full h-full relative cursor-default outline-none"
         >
+          {/* History Undo/Redo Feedback HUD Banner */}
+          {historyToast && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-neutral-900/90 dark:bg-white/95 text-white dark:text-neutral-900 border border-neutral-700 dark:border-neutral-200 px-3.5 py-1.5 text-xs font-semibold pointer-events-none flex items-center gap-2 z-30 shadow-lg animate-in fade-in slide-in-from-top-2 duration-150">
+              {historyToast.type === 'undo' ? (
+                <Undo2 className="w-3.5 h-3.5 text-amber-400" />
+              ) : (
+                <Redo2 className="w-3.5 h-3.5 text-amber-500" />
+              )}
+              <span>{historyToast.message}</span>
+              <span className="text-[10px] font-mono opacity-65">
+                ({historyState.currentIndex + 1}/{historyState.entries.length})
+              </span>
+            </div>
+          )}
+
           {/* Top-left Architecture Viewport Badge */}
           <div className="absolute top-3 left-3 bg-white/95 dark:bg-[#0e121b]/95 backdrop-blur-xs border border-neutral-200 dark:border-neutral-800 px-3 py-1.5 text-[11px] pointer-events-none flex items-center gap-2 z-20 shadow-xs">
             <span className="text-ry-gradient font-bold uppercase tracking-wider">
@@ -2178,6 +2926,30 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                   title={`Bend Axis: ${selectedComp.bendAxis || 'x'} (Click or press 'B' to toggle X → Y → Z)`}
                 >
                   {selectedComp.bendAxis || 'x'}
+                </button>
+              </div>
+              <div className="w-[1px] h-3 bg-neutral-200 dark:bg-neutral-800" />
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-neutral-400 font-mono">Face:</span>
+                <select
+                  value={selectedFaceKey}
+                  onChange={(e) => setSelectedFaceKey(e.target.value as GeometryFaceKey)}
+                  className="bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 text-[10px] font-mono px-1 py-0.5 text-neutral-800 dark:text-neutral-200 cursor-pointer"
+                  title="Target geometry face for texturing (or click on any face in 3D viewport)"
+                >
+                  {getFaceOptionsForShape(selectedComp.shape).map((f) => (
+                    <option key={f.key} value={f.key}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setActiveRightTab('textures')}
+                  className="p-1 hover:text-amber-500 text-neutral-400 cursor-pointer"
+                  title="Open Textures & Materials Studio"
+                >
+                  <Palette className="w-3 h-3" />
                 </button>
               </div>
               <button
@@ -2391,7 +3163,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                       value={selectedComp.name}
                       onChange={(e) => {
                         const val = e.target.value;
-                        updateSelectedComp((c) => ({ ...c, name: val }));
+                        updateSelectedComp((c) => ({ ...c, name: val }), 'Rename Component', true);
                       }}
                       className="bg-neutral-50 dark:bg-[#141926] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-neutral-100 font-semibold px-2 py-1 text-xs w-44 outline-none focus:border-amber-500"
                     />
@@ -2434,7 +3206,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                           updateSelectedComp((c) => ({
                             ...c,
                             position: [val, c.position[1], c.position[2]],
-                          }));
+                          }), 'Move Position X', true);
                         }}
                         className="w-full bg-neutral-50 dark:bg-[#141926] border border-neutral-200 dark:border-neutral-800 px-2 py-1 text-neutral-900 dark:text-neutral-100 font-mono tabular-nums outline-none focus:border-amber-500"
                       />
@@ -2450,7 +3222,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                           updateSelectedComp((c) => ({
                             ...c,
                             position: [c.position[0], val, c.position[2]],
-                          }));
+                          }), 'Move Position Y', true);
                         }}
                         className="w-full bg-neutral-50 dark:bg-[#141926] border border-neutral-200 dark:border-neutral-800 px-2 py-1 text-neutral-900 dark:text-neutral-100 font-mono tabular-nums outline-none focus:border-amber-500"
                       />
@@ -2466,7 +3238,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                           updateSelectedComp((c) => ({
                             ...c,
                             position: [c.position[0], c.position[1], val],
-                          }));
+                          }), 'Move Position Z', true);
                         }}
                         className="w-full bg-neutral-50 dark:bg-[#141926] border border-neutral-200 dark:border-neutral-800 px-2 py-1 text-neutral-900 dark:text-neutral-100 font-mono tabular-nums outline-none focus:border-amber-500"
                       />
@@ -2492,7 +3264,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                           updateSelectedComp((c) => ({
                             ...c,
                             scale: [val, c.scale[1], c.scale[2]],
-                          }));
+                          }), 'Scale Width', true);
                         }}
                         className="w-full bg-neutral-50 dark:bg-[#141926] border border-neutral-200 dark:border-neutral-800 px-2 py-1 text-neutral-900 dark:text-neutral-100 font-mono tabular-nums outline-none focus:border-amber-500"
                       />
@@ -2509,7 +3281,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                           updateSelectedComp((c) => ({
                             ...c,
                             scale: [c.scale[0], val, c.scale[2]],
-                          }));
+                          }), 'Scale Height', true);
                         }}
                         className="w-full bg-neutral-50 dark:bg-[#141926] border border-neutral-200 dark:border-neutral-800 px-2 py-1 text-neutral-900 dark:text-neutral-100 font-mono tabular-nums outline-none focus:border-amber-500"
                       />
@@ -2526,7 +3298,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                           updateSelectedComp((c) => ({
                             ...c,
                             scale: [c.scale[0], c.scale[1], val],
-                          }));
+                          }), 'Scale Depth', true);
                         }}
                         className="w-full bg-neutral-50 dark:bg-[#141926] border border-neutral-200 dark:border-neutral-800 px-2 py-1 text-neutral-900 dark:text-neutral-100 font-mono tabular-nums outline-none focus:border-amber-500"
                       />
@@ -2571,7 +3343,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                         updateSelectedComp((c) => ({
                           ...c,
                           rotation: [val, c.rotation[1], c.rotation[2]],
-                        }));
+                        }), 'Rotate Pitch (X)', true);
                       }}
                       className="w-full accent-amber-500 mb-1"
                     />
@@ -2610,7 +3382,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                         updateSelectedComp((c) => ({
                           ...c,
                           rotation: [c.rotation[0], val, c.rotation[2]],
-                        }));
+                        }), 'Rotate Yaw (Y)', true);
                       }}
                       className="w-full accent-amber-500 mb-1"
                     />
@@ -2649,7 +3421,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                         updateSelectedComp((c) => ({
                           ...c,
                           rotation: [c.rotation[0], c.rotation[1], val],
-                        }));
+                        }), 'Rotate Roll (Z)', true);
                       }}
                       className="w-full accent-amber-500 mb-1"
                     />
@@ -2819,7 +3591,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                             onClick={() => updateSelectedComp((c) => ({
                               ...c,
                               materialConfig: mat,
-                            }))}
+                            }), `Cardstock: ${mat.name}`, false)}
                             className={`p-1.5 border text-left flex flex-col items-center gap-1 transition-all cursor-pointer ${
                               isCurrent
                                 ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/30'
@@ -2853,7 +3625,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                             ...c.materialConfig,
                             color: e.target.value,
                           },
-                        }))}
+                        }), 'Paper Color', true)}
                         className="w-8 h-7 border border-neutral-200 dark:border-neutral-800 p-0.5 bg-neutral-50 dark:bg-[#141926] cursor-pointer"
                         title="Pick custom cardstock color"
                       />
@@ -2866,49 +3638,91 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                             ...c.materialConfig,
                             color: e.target.value,
                           },
-                        }))}
+                        }), 'Paper Color', true)}
                         className="flex-1 bg-neutral-50 dark:bg-[#141926] border border-neutral-200 dark:border-neutral-800 px-2 py-1 text-neutral-900 dark:text-neutral-100 font-mono text-xs uppercase"
                         placeholder="#ffffff"
                       />
                     </div>
                   </div>
 
-                  {/* Custom Texture Mapping & Upload */}
-                  <div className="pt-2 border-t border-neutral-200/60 dark:border-neutral-800/60">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-[10px] text-ry-gradient font-bold uppercase tracking-wider">Texture Mapping &amp; Upload</label>
-                      {selectedComp.materialConfig.textureUrl && (
-                        <button
-                          type="button"
-                          onClick={handleRemoveTexture}
-                          className="text-[10px] text-red-500 hover:text-red-700 dark:hover:text-red-400 font-medium cursor-pointer"
-                        >
-                          Remove
-                        </button>
-                      )}
+                  {/* Custom Texture Mapping & Upload for Selected Face */}
+                  <div className="pt-2 border-t border-neutral-200/60 dark:border-neutral-800/60 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Layers className="w-3 h-3 text-amber-500" />
+                        <label className="text-[10px] text-ry-gradient font-bold uppercase tracking-wider">
+                          Target Face Texturing
+                        </label>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveRightTab('textures')}
+                        className="text-[10px] text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
+                      >
+                        Texture Library →
+                      </button>
                     </div>
 
-                    {selectedComp.materialConfig.textureUrl ? (
+                    {/* Quick Face Buttons */}
+                    <div className="grid grid-cols-4 gap-1">
+                      {getFaceOptionsForShape(selectedComp.shape).map((face) => {
+                        const isSelected = selectedFaceKey === face.key;
+                        const faceOverride = selectedComp.faceMaterials?.[face.key as keyof FaceMaterialsConfig];
+                        const hasTexture = face.key === 'all' 
+                          ? Boolean(selectedComp.materialConfig.textureUrl)
+                          : Boolean(faceOverride?.textureUrl);
+
+                        return (
+                          <button
+                            key={face.key}
+                            type="button"
+                            onClick={() => setSelectedFaceKey(face.key)}
+                            className={`p-1 border text-center transition-all cursor-pointer ${
+                              isSelected
+                                ? 'border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold'
+                                : 'border-neutral-200 dark:border-neutral-800 hover:border-neutral-400 dark:hover:border-neutral-700 bg-white dark:bg-[#0e121b] text-neutral-600 dark:text-neutral-400'
+                            }`}
+                            title={face.desc}
+                          >
+                            <div className="flex items-center justify-center gap-1">
+                              <span className="text-[9px] font-mono uppercase">{face.tag}</span>
+                              {hasTexture && <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {getActiveFaceConfig(selectedComp).textureUrl ? (
                       <div className="p-2 border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#141926] space-y-2">
                         <div className="flex items-center gap-2">
                           <img
-                            src={selectedComp.materialConfig.textureUrl}
+                            src={getActiveFaceConfig(selectedComp).textureUrl}
                             alt="Custom texture preview"
                             className="w-10 h-10 object-cover border border-neutral-300 dark:border-neutral-700 shrink-0"
                           />
                           <div className="min-w-0 flex-1">
                             <span className="text-xs font-semibold text-neutral-900 dark:text-white block truncate">
-                              Texture Active
+                              {selectedFaceKey === 'all' ? 'All Faces Active' : `[${selectedFaceKey.toUpperCase()}] Face Active`}
                             </span>
-                            <label className="text-[10px] text-amber-600 dark:text-amber-400 hover:underline cursor-pointer inline-block">
-                              Replace Image...
-                              <input
-                                type="file"
-                                accept="image/*"
-                                onChange={handleTextureUpload}
-                                className="hidden"
-                              />
-                            </label>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <label className="text-[10px] text-amber-600 dark:text-amber-400 hover:underline cursor-pointer inline-block">
+                                Replace...
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={handleTextureUpload}
+                                  className="hidden"
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                onClick={handleRemoveTexture}
+                                className="text-[10px] text-red-500 hover:underline cursor-pointer"
+                              >
+                                Remove
+                              </button>
+                            </div>
                           </div>
                         </div>
 
@@ -2917,7 +3731,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                           <div className="flex justify-between text-[10px] text-neutral-500 mb-1">
                             <span>Tile Repeat (X / Y)</span>
                             <span className="font-mono tabular-nums">
-                              {selectedComp.materialConfig.repeat?.[0] || 1}x · {selectedComp.materialConfig.repeat?.[1] || 1}y
+                              {getActiveFaceConfig(selectedComp).repeat?.[0] || 1}x · {getActiveFaceConfig(selectedComp).repeat?.[1] || 1}y
                             </span>
                           </div>
                           <div className="grid grid-cols-2 gap-2">
@@ -2926,17 +3740,8 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                               min="1"
                               max="8"
                               step="1"
-                              value={selectedComp.materialConfig.repeat?.[0] || 1}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                updateSelectedComp((c) => ({
-                                  ...c,
-                                  materialConfig: {
-                                    ...c.materialConfig,
-                                    repeat: [val, c.materialConfig.repeat?.[1] || 1],
-                                  },
-                                }));
-                              }}
+                              value={getActiveFaceConfig(selectedComp).repeat?.[0] || 1}
+                              onChange={(e) => handleUpdateFaceRepeat(0, parseInt(e.target.value, 10))}
                               className="accent-amber-500"
                               title="Repeat X"
                             />
@@ -2945,17 +3750,8 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                               min="1"
                               max="8"
                               step="1"
-                              value={selectedComp.materialConfig.repeat?.[1] || 1}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                updateSelectedComp((c) => ({
-                                  ...c,
-                                  materialConfig: {
-                                    ...c.materialConfig,
-                                    repeat: [c.materialConfig.repeat?.[0] || 1, val],
-                                  },
-                                }));
-                              }}
+                              value={getActiveFaceConfig(selectedComp).repeat?.[1] || 1}
+                              onChange={(e) => handleUpdateFaceRepeat(1, parseInt(e.target.value, 10))}
                               className="accent-amber-500"
                               title="Repeat Y"
                             />
@@ -2965,7 +3761,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                     ) : (
                       <label className="flex items-center justify-center gap-2 p-2.5 border border-dashed border-neutral-300 dark:border-neutral-700 hover:border-amber-500 dark:hover:border-amber-500 bg-neutral-50 dark:bg-[#141926] hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-300 transition-colors cursor-pointer text-xs">
                         <Upload className="w-3.5 h-3.5 text-amber-500" />
-                        <span>+ Add / Upload Texture Image</span>
+                        <span>+ Add Texture to {selectedFaceKey === 'all' ? 'Model' : `[${selectedFaceKey.toUpperCase()}] Face`}</span>
                         <input
                           type="file"
                           accept="image/*"
@@ -2996,7 +3792,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                             ...c.materialConfig,
                             roughness: val,
                           },
-                        }));
+                        }), 'Matte Roughness', true);
                       }}
                       className="w-full accent-amber-500"
                     />
@@ -3016,7 +3812,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                       value={selectedComp.thickness}
                       onChange={(e) => {
                         const val = parseFloat(e.target.value);
-                        updateSelectedComp((c) => ({ ...c, thickness: val }));
+                        updateSelectedComp((c) => ({ ...c, thickness: val }), 'Cardstock Thickness', true);
                       }}
                       className="w-full accent-amber-500"
                     />
@@ -3052,53 +3848,172 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                   )}
                 </div>
               </div>
-              {selectedComp?.materialConfig.textureUrl && (
-                <button
-                  type="button"
-                  onClick={handleRemoveTexture}
-                  className="px-2 py-1 text-[10px] font-semibold text-red-600 dark:text-red-400 border border-red-200 dark:border-red-900/40 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 transition-colors cursor-pointer"
-                >
-                  Clear Texture
-                </button>
+              {selectedComp && (
+                <div className="flex items-center gap-1.5">
+                  {selectedComp.faceMaterials && Object.keys(selectedComp.faceMaterials).length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleResetAllFaceTextures}
+                      className="px-2 py-0.5 text-[10px] font-semibold text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white border border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800/80 hover:bg-neutral-200 transition-colors cursor-pointer"
+                      title="Reset all per-face texture overrides to restore uniform material"
+                    >
+                      Reset All Faces
+                    </button>
+                  )}
+                  {((selectedFaceKey === 'all' && selectedComp.materialConfig.textureUrl) || isCurrentFaceOverridden(selectedComp)) && (
+                    <button
+                      type="button"
+                      onClick={handleRemoveTexture}
+                      className="px-2 py-0.5 text-[10px] font-semibold text-red-600 dark:text-red-400 border border-red-200 dark:border-red-900/40 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 transition-colors cursor-pointer"
+                    >
+                      {selectedFaceKey === 'all' ? 'Clear Model' : 'Clear Face'}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
 
+            {/* Target Geometry Face Selector */}
+            {selectedComp && (
+              <div className="p-3 border border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-[#141926]/70 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-amber-500" />
+                    <span className="text-[10px] font-bold text-ry-gradient uppercase tracking-wider">
+                      Target Geometry Face
+                    </span>
+                  </div>
+                  <span className="text-[9px] text-neutral-400 font-mono">
+                    {selectedComp.faceMaterials ? `${Object.keys(selectedComp.faceMaterials).length} custom faces` : 'Uniform texture'}
+                  </span>
+                </div>
+
+                {/* Face selector buttons */}
+                <div className="grid grid-cols-4 gap-1.5">
+                  {getFaceOptionsForShape(selectedComp.shape).map((face) => {
+                    const isSelected = selectedFaceKey === face.key;
+                    const faceOverride = selectedComp.faceMaterials?.[face.key as keyof FaceMaterialsConfig];
+                    const hasTexture = face.key === 'all' 
+                      ? Boolean(selectedComp.materialConfig.textureUrl)
+                      : Boolean(faceOverride?.textureUrl);
+                    const textureThumb = face.key === 'all'
+                      ? selectedComp.materialConfig.textureUrl
+                      : faceOverride?.textureUrl;
+
+                    return (
+                      <button
+                        key={face.key}
+                        type="button"
+                        onClick={() => setSelectedFaceKey(face.key)}
+                        className={`p-1.5 border text-center relative flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                          isSelected
+                            ? 'border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold shadow-2xs'
+                            : 'border-neutral-200 dark:border-neutral-800 hover:border-neutral-400 dark:hover:border-neutral-700 bg-white dark:bg-[#0e121b] text-neutral-600 dark:text-neutral-400'
+                        }`}
+                        title={face.desc}
+                      >
+                        <div className="flex items-center justify-center gap-1 w-full">
+                          <span className="text-[9px] font-mono uppercase tracking-tighter truncate">
+                            {face.tag}
+                          </span>
+                          {hasTexture && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" title="Texture active on this face" />
+                          )}
+                        </div>
+                        <span className="text-[9px] leading-tight truncate w-full">
+                          {face.label.split(' ')[0]}
+                        </span>
+                        {textureThumb ? (
+                          <div className="w-full h-3 overflow-hidden border border-neutral-300 dark:border-neutral-700 mt-0.5 bg-neutral-200">
+                            <img src={textureThumb} alt="" className="w-full h-full object-cover" />
+                          </div>
+                        ) : (
+                          <div className="w-full h-1 mt-1 bg-transparent" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Active Face Status Banner */}
+                <div className="flex items-center justify-between text-[10px] bg-white dark:bg-[#0e121b] p-2 border border-neutral-200/80 dark:border-neutral-800/80">
+                  <div className="min-w-0">
+                    <span className="font-semibold text-neutral-800 dark:text-neutral-200">
+                      Active: {getFaceOptionsForShape(selectedComp.shape).find((f) => f.key === selectedFaceKey)?.label || 'All Faces'}
+                    </span>
+                    <div className="text-[9px] text-neutral-400 truncate">
+                      {isCurrentFaceOverridden(selectedComp) 
+                        ? 'Custom face texture active (overriding base)'
+                        : (selectedFaceKey === 'all' ? 'Applying texture to all surfaces' : 'Inheriting base cardstock material')}
+                    </div>
+                  </div>
+                  {isCurrentFaceOverridden(selectedComp) && (
+                    <button
+                      type="button"
+                      onClick={handleRemoveTexture}
+                      className="text-[9px] font-semibold text-red-500 hover:text-red-700 dark:hover:text-red-400 cursor-pointer shrink-0 ml-2"
+                    >
+                      Clear Face
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Custom Image Upload Option */}
             <div className="p-3 border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50/70 dark:bg-[#141926]/70 hover:border-amber-500 transition-colors">
-              <div className="text-[10px] font-bold text-ry-gradient uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                <Upload className="w-3 h-3 text-amber-500" />
-                <span>Upload Custom Image / Pattern</span>
+              <div className="text-[10px] font-bold text-ry-gradient uppercase tracking-wider mb-1 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Upload className="w-3 h-3 text-amber-500" />
+                  <span>Upload Image for {selectedFaceKey === 'all' ? 'All Faces' : `[${selectedFaceKey.toUpperCase()}] Face`}</span>
+                </div>
+                {selectedFaceKey !== 'all' && (
+                  <span className="text-[9px] font-mono px-1 py-0.2 bg-amber-500/10 text-amber-500 font-bold border border-amber-500/20">
+                    Target: {selectedFaceKey.toUpperCase()}
+                  </span>
+                )}
               </div>
               <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mb-2 leading-relaxed">
-                Add any image from your computer to wrap directly around your paper models.
+                {selectedFaceKey === 'all'
+                  ? 'Add any image from your computer to wrap directly around all surfaces of your paper model.'
+                  : `Upload an image to apply specifically to the ${selectedFaceKey.toUpperCase()} face of this geometry.`}
               </p>
               
-              {selectedComp?.materialConfig.textureUrl ? (
+              {selectedComp && getActiveFaceConfig(selectedComp).textureUrl ? (
                 <div className="flex items-center gap-2 p-2 border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-[#0e121b]">
                   <img
-                    src={selectedComp.materialConfig.textureUrl}
+                    src={getActiveFaceConfig(selectedComp).textureUrl}
                     alt="Active texture"
                     className="w-10 h-10 object-cover border border-neutral-300 dark:border-neutral-700 shrink-0"
                   />
                   <div className="min-w-0 flex-1">
                     <span className="text-xs font-bold text-ry-gradient block truncate">
-                      Texture Active
+                      {selectedFaceKey === 'all' ? 'Texture Active (All Faces)' : `Face [${selectedFaceKey.toUpperCase()}] Texture Active`}
                     </span>
-                    <label className="text-[10px] text-amber-600 dark:text-amber-400 hover:underline cursor-pointer inline-block">
-                      Replace Image File...
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleTextureUpload}
-                        className="hidden"
-                      />
-                    </label>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <label className="text-[10px] text-amber-600 dark:text-amber-400 hover:underline cursor-pointer inline-block">
+                        Replace File...
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleTextureUpload}
+                          className="hidden"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleRemoveTexture}
+                        className="text-[10px] text-red-500 hover:underline cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </div>
                 </div>
               ) : (
                 <label className="flex items-center justify-center gap-2 p-2.5 bg-white dark:bg-[#0e121b] border border-neutral-200 dark:border-neutral-800 hover:border-amber-500 text-neutral-700 dark:text-neutral-300 transition-colors cursor-pointer text-xs font-semibold shadow-xs">
                   <ImageIcon className="w-4 h-4 text-amber-500" />
-                  <span>Choose Image File (PNG, JPG, WEBP)...</span>
+                  <span>Choose Image for {selectedFaceKey === 'all' ? 'Model' : `${selectedFaceKey.toUpperCase()} Face`} (PNG, JPG, WEBP)...</span>
                   <input
                     type="file"
                     accept="image/*"
@@ -3137,7 +4052,8 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
               <div className="grid grid-cols-2 gap-2">
                 {TEXTURE_PRESETS.filter((p) => textureCategoryFilter === 'All' || p.category === textureCategoryFilter).map((preset) => {
                   const url = preset.getUrl();
-                  const isActive = selectedComp?.materialConfig.textureUrl === url;
+                  const activeConfig = selectedComp ? getActiveFaceConfig(selectedComp) : null;
+                  const isActive = activeConfig?.textureUrl === url;
                   return (
                     <button
                       key={preset.id}
@@ -3174,11 +4090,23 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
               </div>
             </div>
 
-            {/* Texture Mapping Controls (UV Repeat, Tint, Finish) */}
+            {/* Texture Mapping Controls (UV Repeat, Tint, Finish) for Selected Face */}
             {selectedComp && (
               <div className="pt-3 border-t border-neutral-200 dark:border-neutral-800 space-y-3">
-                <div className="text-[10px] font-bold text-ry-gradient uppercase tracking-wider">
-                  Mapping &amp; Finish Controls
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] font-bold text-ry-gradient uppercase tracking-wider">
+                    {selectedFaceKey === 'all' ? 'Mapping & Finish (All Faces)' : `[${selectedFaceKey.toUpperCase()}] Face Mapping & Finish`}
+                  </div>
+                  {selectedFaceKey !== 'all' && getActiveFaceConfig(selectedComp).textureUrl && (
+                    <button
+                      type="button"
+                      onClick={handleCopyFaceTextureToAllFaces}
+                      className="text-[9px] text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
+                      title="Copy this face's texture and settings to all other faces"
+                    >
+                      Copy to All Faces
+                    </button>
+                  )}
                 </div>
 
                 {/* UV Repeat */}
@@ -3186,7 +4114,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                   <div className="flex justify-between text-[10px] text-neutral-500 mb-1">
                     <span>Tile Density (Repeat X / Y)</span>
                     <span className="font-mono tabular-nums text-ry-gradient font-bold">
-                      {selectedComp.materialConfig.repeat?.[0] || 1}x · {selectedComp.materialConfig.repeat?.[1] || 1}y
+                      {getActiveFaceConfig(selectedComp).repeat?.[0] || 1}x · {getActiveFaceConfig(selectedComp).repeat?.[1] || 1}y
                     </span>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -3195,17 +4123,8 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                       min="1"
                       max="8"
                       step="1"
-                      value={selectedComp.materialConfig.repeat?.[0] || 1}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value, 10);
-                        updateSelectedComp((c) => ({
-                          ...c,
-                          materialConfig: {
-                            ...c.materialConfig,
-                            repeat: [val, c.materialConfig.repeat?.[1] || 1],
-                          },
-                        }));
-                      }}
+                      value={getActiveFaceConfig(selectedComp).repeat?.[0] || 1}
+                      onChange={(e) => handleUpdateFaceRepeat(0, parseInt(e.target.value, 10))}
                       className="accent-amber-500"
                       title="Repeat X"
                     />
@@ -3214,17 +4133,8 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                       min="1"
                       max="8"
                       step="1"
-                      value={selectedComp.materialConfig.repeat?.[1] || 1}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value, 10);
-                        updateSelectedComp((c) => ({
-                          ...c,
-                          materialConfig: {
-                            ...c.materialConfig,
-                            repeat: [c.materialConfig.repeat?.[0] || 1, val],
-                          },
-                        }));
-                      }}
+                      value={getActiveFaceConfig(selectedComp).repeat?.[1] || 1}
+                      onChange={(e) => handleUpdateFaceRepeat(1, parseInt(e.target.value, 10))}
                       className="accent-amber-500"
                       title="Repeat Y"
                     />
@@ -3237,27 +4147,15 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                   <div className="flex items-center gap-2">
                     <input
                       type="color"
-                      value={selectedComp.materialConfig.color || '#ffffff'}
-                      onChange={(e) => updateSelectedComp((c) => ({
-                        ...c,
-                        materialConfig: {
-                          ...c.materialConfig,
-                          color: e.target.value,
-                        },
-                      }))}
+                      value={getActiveFaceConfig(selectedComp).color || '#ffffff'}
+                      onChange={(e) => handleUpdateFaceColor(e.target.value)}
                       className="w-8 h-7 border border-neutral-200 dark:border-neutral-800 p-0.5 bg-neutral-50 dark:bg-[#141926] cursor-pointer"
                       title="Texture Tint Color"
                     />
                     <input
                       type="text"
-                      value={selectedComp.materialConfig.color || '#ffffff'}
-                      onChange={(e) => updateSelectedComp((c) => ({
-                        ...c,
-                        materialConfig: {
-                          ...c.materialConfig,
-                          color: e.target.value,
-                        },
-                      }))}
+                      value={getActiveFaceConfig(selectedComp).color || '#ffffff'}
+                      onChange={(e) => handleUpdateFaceColor(e.target.value)}
                       className="flex-1 bg-neutral-50 dark:bg-[#141926] border border-neutral-200 dark:border-neutral-800 px-2 py-1 text-neutral-900 dark:text-neutral-100 font-mono text-xs uppercase"
                       placeholder="#ffffff"
                     />
@@ -3268,24 +4166,17 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                 <div>
                   <div className="flex justify-between text-[10px] text-neutral-500 mb-1">
                     <span>Matte Roughness</span>
-                    <span className="font-mono tabular-nums text-ry-gradient font-bold">{Math.round((selectedComp.materialConfig.roughness || 0.85) * 100)}%</span>
+                    <span className="font-mono tabular-nums text-ry-gradient font-bold">
+                      {Math.round((getActiveFaceConfig(selectedComp).roughness || 0.85) * 100)}%
+                    </span>
                   </div>
                   <input
                     type="range"
                     min="0.4"
                     max="1.0"
                     step="0.05"
-                    value={selectedComp.materialConfig.roughness || 0.85}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value);
-                      updateSelectedComp((c) => ({
-                        ...c,
-                        materialConfig: {
-                          ...c.materialConfig,
-                          roughness: val,
-                        },
-                      }));
-                    }}
+                    value={getActiveFaceConfig(selectedComp).roughness || 0.85}
+                    onChange={(e) => handleUpdateFaceRoughness(parseFloat(e.target.value))}
                     className="w-full accent-amber-500"
                   />
                 </div>
@@ -3328,13 +4219,37 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        updateSelectedComp((c) => ({ ...c, visible: c.visible === false ? true : false }));
+                        handleToggleComponentVisibility(comp.id);
                       }}
-                      className="text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 p-1 cursor-pointer"
+                      className="text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 p-1 cursor-pointer transition-colors"
+                      title={comp.visible !== false ? 'Hide Component' : 'Show Component'}
                     >
                       {comp.visible !== false ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3 text-red-500" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDuplicateComponentById(comp.id);
+                      }}
+                      className="text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 p-1 cursor-pointer transition-colors"
+                      title="Duplicate in Outliner"
+                    >
+                      <Copy className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteComponentById(comp.id);
+                      }}
+                      className="text-neutral-400 hover:text-red-500 p-1 cursor-pointer transition-colors"
+                      title="Delete from Outliner"
+                    >
+                      <Trash2 className="w-3 h-3" />
                     </button>
                   </div>
                 </div>
@@ -3509,19 +4424,33 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                     <span className="font-mono text-neutral-900 dark:text-neutral-100 font-bold text-xs tabular-nums">{currentBuilding.heightMeters} m</span>
                   </div>
                   <div>
-                    <span className="text-neutral-500 block uppercase">Resilience</span>
-                    <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold text-xs tabular-nums">{currentBuilding.resilienceScore}%</span>
+                    <span className="text-neutral-500 block uppercase">Storage</span>
+                    <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold text-xs">Device Disk</span>
                   </div>
                 </div>
 
                 <div className="pt-2 flex flex-col sm:flex-row gap-2 justify-end">
                   <button
                     type="button"
-                    onClick={() => setSaveModalOpen(false)}
-                    className="px-4 py-1.5 border border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 text-xs font-medium cursor-pointer"
+                    onClick={() => {
+                      const fname = saveAsName.trim() || currentBuilding.name;
+                      exportBuildingToDeviceFile({
+                        ...currentBuilding,
+                        name: fname,
+                        category: saveAsCategory,
+                        description: saveAsDesc.trim() || currentBuilding.description,
+                      });
+                      setSaveSuccessMessage(`Downloaded "${fname}.paper" to device!`);
+                      setSaveSuccessNotice(true);
+                      setTimeout(() => setSaveSuccessNotice(false), 3000);
+                    }}
+                    className="px-3 py-1.5 border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer"
+                    title="Save .paper project file directly to your computer or phone"
                   >
-                    Cancel
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download .paper File</span>
                   </button>
+
                   <button
                     type="button"
                     onClick={handleUpdateCurrent}
@@ -3530,6 +4459,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                   >
                     Update Current
                   </button>
+
                   <button
                     type="button"
                     onClick={handleSaveAsNew}

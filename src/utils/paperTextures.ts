@@ -887,7 +887,7 @@ export function createComponentThreeMaterials(
 
   // Helper to resolve material config for a face with fallback to component base material
   const getMatForFace = (faceKey: keyof FaceMaterialsConfig) => {
-    const faceConfig = fm[faceKey] || comp.materialConfig;
+    const faceConfig = fm[faceKey] || (faceKey !== 'top' && faceKey !== 'bottom' && fm.side ? fm.side : undefined) || comp.materialConfig;
     return createPaperThreeMaterial(faceConfig, isSelected, stressFactor, nightFactor);
   };
 
@@ -898,7 +898,8 @@ export function createComponentThreeMaterials(
     comp.shape === 'paper_sheet' || 
     comp.shape === 'square_paper' || 
     comp.shape === 'folded_wall' || 
-    comp.shape === 'balcony_tab'
+    comp.shape === 'balcony_tab' ||
+    comp.shape === 'square_slab'
   ) {
     return [
       getMatForFace('right'),
@@ -910,7 +911,7 @@ export function createComponentThreeMaterials(
     ];
   }
 
-  // CylinderGeometry uses 3 groups: [0: side, 1: top, 2: bottom]
+  // CylinderGeometry & Extruded Slabs use 3 groups: [0: side rim, 1: top cap, 2: bottom cap]
   if (
     comp.shape === 'cylindrical_column' || 
     comp.shape === 'triangular_prism' || 
@@ -919,7 +920,14 @@ export function createComponentThreeMaterials(
     comp.shape === 'barrel_vault' || 
     comp.shape === 'paper_hyperboloid' || 
     comp.shape === 'stepped_crown' || 
-    comp.shape === 'trapezoid_prism'
+    comp.shape === 'trapezoid_prism' ||
+    comp.shape === 'circle_slab' ||
+    comp.shape === 'triangle_slab' ||
+    comp.shape === 'pentagon_slab' ||
+    comp.shape === 'hexagon_slab' ||
+    comp.shape === 'octagon_slab' ||
+    comp.shape === 'semicircle_slab' ||
+    comp.shape === 'trapezoid_slab'
   ) {
     return [
       fm.side ? getMatForFace('side') : getMatForFace('front'),

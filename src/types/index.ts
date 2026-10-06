@@ -28,6 +28,14 @@ export type ComponentShape =
   | 'paper_sphere'
   | 'paper_torus'
   | 'paper_hyperboloid'
+  | 'square_slab'                 // Square floor slab / podium
+  | 'circle_slab'                 // Circular disc slab / patio
+  | 'triangle_slab'               // Triangular floor slab
+  | 'pentagon_slab'               // 5-sided pentagon floor slab
+  | 'hexagon_slab'                // 6-sided hexagon floor slab
+  | 'octagon_slab'                // 8-sided octagon floor slab
+  | 'semicircle_slab'             // Semi-circle / D-shaped balcony slab
+  | 'trapezoid_slab'              // 4-sided tapered trapezoidal floor slab
   | 'balcony_tab'
   | 'arch_portal'
   | 'skybridge_arch_crown'

@@ -276,7 +276,7 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({ isOpen, onClose })
 
                   <div className="p-2.5 border border-amber-500/30 bg-amber-500/5 sm:col-span-2">
                     <div className="flex items-center gap-1.5 font-bold text-ry-gradient uppercase text-[11px]">
-                      <span>★ New Curvature Geometries: Sphere, Torus &amp; Hyperboloid</span>
+                      <span>★ Curvature Geometries: Sphere, Torus &amp; Hyperboloid</span>
                     </div>
                     <div className="grid grid-cols-3 gap-2 mt-1.5 text-[11px] text-neutral-600 dark:text-neutral-300">
                       <div>
@@ -287,6 +287,41 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({ isOpen, onClose })
                       </div>
                       <div>
                         <strong>Paper Hyperboloid:</strong> Waisted hour-glass cooling-tower hyperbolic revolution curve.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 border border-amber-500/30 bg-amber-500/5 sm:col-span-2">
+                    <div className="flex items-center gap-1.5 font-bold text-ry-gradient uppercase text-[11px]">
+                      <span>★ Architectural Slabs &amp; Podium Plates (Floor &amp; Ceiling Decks)</span>
+                    </div>
+                    <p className="text-[11px] text-neutral-500 mt-1 mb-2">
+                      Planar structural plates with slim vertical profiles designed for cantilevered balconies, foundation podiums, floor slabs, and terrace decks:
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] text-neutral-600 dark:text-neutral-300">
+                      <div className="p-1.5 bg-white dark:bg-[#0e121b] border border-neutral-200 dark:border-neutral-800">
+                        <strong>Square Slab:</strong> 4-sided square plinth platform / floor plate.
+                      </div>
+                      <div className="p-1.5 bg-white dark:bg-[#0e121b] border border-neutral-200 dark:border-neutral-800">
+                        <strong>Circle Slab:</strong> Circular disc patio / rotunda deck.
+                      </div>
+                      <div className="p-1.5 bg-white dark:bg-[#0e121b] border border-neutral-200 dark:border-neutral-800">
+                        <strong>Triangle Slab:</strong> 3-sided cantilevered triangular plate.
+                      </div>
+                      <div className="p-1.5 bg-white dark:bg-[#0e121b] border border-neutral-200 dark:border-neutral-800">
+                        <strong>Pentagon Slab:</strong> 5-sided regular pentagon floor slab.
+                      </div>
+                      <div className="p-1.5 bg-white dark:bg-[#0e121b] border border-neutral-200 dark:border-neutral-800">
+                        <strong>Hexagon Slab:</strong> 6-sided honeycomb terrace slab.
+                      </div>
+                      <div className="p-1.5 bg-white dark:bg-[#0e121b] border border-neutral-200 dark:border-neutral-800">
+                        <strong>Octagon Slab:</strong> 8-sided gazebo podium slab.
+                      </div>
+                      <div className="p-1.5 bg-white dark:bg-[#0e121b] border border-neutral-200 dark:border-neutral-800">
+                        <strong>Semicircle Slab:</strong> Half-circle / D-shaped balcony deck.
+                      </div>
+                      <div className="p-1.5 bg-white dark:bg-[#0e121b] border border-neutral-200 dark:border-neutral-800">
+                        <strong>Trapezoid Slab:</strong> Tapered cantilever floor slab.
                       </div>
                     </div>
                   </div>
@@ -397,38 +432,64 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({ isOpen, onClose })
               <div className="space-y-4">
                 <div>
                   <h3 className="text-sm font-bold text-ry-gradient uppercase tracking-wide mb-1">
-                    Procedural Textures &amp; Custom Materials
+                    Per-Face Texturing &amp; Architectural Finishes
                   </h3>
                   <p className="text-neutral-600 dark:text-neutral-400">
-                    Apply realistic architectural materials with authentic paper fibers, grain, and specular response:
+                    Apply realistic architectural materials uniformly across the entire model or customize every individual face independently:
                   </p>
+                </div>
+
+                {/* Per-Face Mapping Feature Callout */}
+                <div className="p-3 border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/20">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className="text-xs font-bold text-amber-600 dark:text-amber-400 uppercase font-mono">
+                      ★ Per-Face Texture Mapping (Front, Back, Sides, Top, Bottom)
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-600 dark:text-neutral-400 leading-relaxed mb-2">
+                    Every 3D geometry supports individual surface face texturing! You can map curtain-wall glass windows to the front facade, brick masonry to the sides, concrete to the base, and gravel/tiles to the roof deck.
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[10px] font-mono">
+                    <div className="p-1.5 bg-white dark:bg-[#0e121b] border border-neutral-200 dark:border-neutral-800">
+                      <strong>Front (+Z)</strong>: Camera facade
+                    </div>
+                    <div className="p-1.5 bg-white dark:bg-[#0e121b] border border-neutral-200 dark:border-neutral-800">
+                      <strong>Back (-Z)</strong>: Rear facade
+                    </div>
+                    <div className="p-1.5 bg-white dark:bg-[#0e121b] border border-neutral-200 dark:border-neutral-800">
+                      <strong>Left/Right</strong>: Side walls
+                    </div>
+                    <div className="p-1.5 bg-white dark:bg-[#0e121b] border border-neutral-200 dark:border-neutral-800">
+                      <strong>Top (+Y)</strong>: Roof terrace
+                    </div>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div className="p-3 border border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-[#141926]/50">
-                    <span className="font-semibold text-neutral-900 dark:text-white">Procedural Architectural Materials</span>
+                    <span className="font-semibold text-neutral-900 dark:text-white">Procedural Architectural Library</span>
                     <ul className="text-[11px] text-neutral-500 mt-1 space-y-0.5">
-                      <li>• Graph Paper &amp; Cyan Grid Blueprint</li>
                       <li>• Glazed Curtain Wall Glass Windows</li>
                       <li>• Traditional Brick Masonry &amp; Cast Concrete</li>
+                      <li>• Graph Paper &amp; Cyan Grid Blueprint</li>
                       <li>• Wood Slats &amp; Travertine Stone Panels</li>
                     </ul>
                   </div>
 
                   <div className="p-3 border border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-[#141926]/50">
-                    <span className="font-semibold text-neutral-900 dark:text-white">Custom Texture Upload</span>
+                    <span className="font-semibold text-neutral-900 dark:text-white">Custom Texture Upload &amp; 3D Picking</span>
                     <p className="text-[11px] text-neutral-500 mt-1">
-                      Upload any PNG, JPEG, or SVG file directly from your computer. The studio automatically builds a GPU canvas texture and maps UV coordinates seamlessly around the geometry.
+                      Upload any PNG, JPEG, or SVG file directly for the active face or entire component. You can also <strong>click directly on any face in the 3D viewport</strong> to instantly select that face for texturing!
                     </p>
                   </div>
                 </div>
 
                 <div className="p-3 border border-neutral-200 dark:border-neutral-800">
                   <span className="font-semibold text-neutral-900 dark:text-white block mb-1">
-                    Fine-Tuning Options
+                    Fine-Tuning Controls
                   </span>
                   <p className="text-[11px] text-neutral-500">
-                    Adjust UV Tile Repeat sliders (1x1 to 8x8) to scale windows or bricks, pick custom cardstock color tints, adjust matte/sheen roughness, or use &ldquo;Apply Texture to ALL Components&rdquo; for uniform architectural massing.
+                    Adjust UV Tile Repeat sliders (1x1 to 8x8) to scale windows or bricks independently per face, pick custom cardstock color tints, adjust matte/sheen roughness, or use &ldquo;Copy to All Faces&rdquo; to replicate a face texture across all sides.
                   </p>
                 </div>
               </div>

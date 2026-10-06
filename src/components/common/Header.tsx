@@ -1,10 +1,12 @@
 import React from 'react';
-import { Box, Sparkles, Download, FolderOpen, Plus, Compass, Sun, Moon, BookOpen } from 'lucide-react';
+import { Box, Sparkles, Download, FolderOpen, Plus, Compass, Sun, Moon, BookOpen, Save, HardDrive } from 'lucide-react';
 import { BuildingModel } from '../../types';
+import { DEFAULT_BUILDINGS } from '../../data/defaultBuildings';
 
 interface HeaderProps {
   onOpenTutorial: () => void;
   onOpenExport: () => void;
+  onOpenDeviceProjects: (tab?: 'saved' | 'save' | 'open') => void;
   rtxEnabled: boolean;
   onToggleRtx: () => void;
   currentBuilding: BuildingModel;
@@ -18,6 +20,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   onOpenTutorial,
   onOpenExport,
+  onOpenDeviceProjects,
   rtxEnabled,
   onToggleRtx,
   currentBuilding,
@@ -60,7 +63,7 @@ export const Header: React.FC<HeaderProps> = ({
           <select
             value={currentBuilding.id}
             onChange={(e) => {
-              const selected = buildingCatalog[e.target.value];
+              const selected = buildingCatalog[e.target.value] || DEFAULT_BUILDINGS[e.target.value];
               if (selected) {
                 onSelectBuilding(selected);
               }
@@ -68,11 +71,29 @@ export const Header: React.FC<HeaderProps> = ({
             className="bg-transparent text-neutral-900 dark:text-neutral-100 text-xs font-semibold outline-none cursor-pointer max-w-[140px] sm:max-w-[200px] truncate"
             title="Switch between 3D papercraft models"
           >
-            {Object.values(buildingCatalog).map((b) => (
-              <option key={b.id} value={b.id} className="bg-white dark:bg-[#141926] text-neutral-900 dark:text-neutral-100 font-normal">
-                {b.name} {b.heightMeters > 0 ? `(${b.heightMeters}m)` : '(Blank Canvas)'}
+            {!buildingCatalog[currentBuilding.id] && !DEFAULT_BUILDINGS[currentBuilding.id] && (
+              <option value={currentBuilding.id} className="bg-white dark:bg-[#141926] text-neutral-900 dark:text-neutral-100 font-normal">
+                {currentBuilding.name} (Active Canvas)
               </option>
-            ))}
+            )}
+
+            {Object.keys(buildingCatalog).length > 0 && (
+              <optgroup label="Saved on Device">
+                {Object.values(buildingCatalog).map((b) => (
+                  <option key={b.id} value={b.id} className="bg-white dark:bg-[#141926] text-neutral-900 dark:text-neutral-100 font-normal">
+                    {b.name} ({b.components.length} parts)
+                  </option>
+                ))}
+              </optgroup>
+            )}
+
+            <optgroup label="Sample Presets">
+              {Object.values(DEFAULT_BUILDINGS).map((b) => (
+                <option key={b.id} value={b.id} className="bg-white dark:bg-[#141926] text-neutral-900 dark:text-neutral-100 font-normal">
+                  {b.name} {b.heightMeters > 0 ? `(${b.heightMeters}m)` : ''}
+                </option>
+              ))}
+            </optgroup>
           </select>
 
           <button
@@ -84,10 +105,31 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         </div>
 
+        {/* Save to Device & Unfinished Buildings Quick Action */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => onOpenDeviceProjects('save')}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold bg-neutral-50 dark:bg-[#141926] hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-800 transition-colors cursor-pointer"
+            title="Save your building to device (.paper file or local draft)"
+          >
+            <Save className="w-3.5 h-3.5 text-amber-500" />
+            <span className="hidden sm:inline text-[11px]">Save to Device</span>
+          </button>
+
+          <button
+            onClick={() => onOpenDeviceProjects('saved')}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-neutral-50 dark:bg-[#141926] hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-800 transition-colors cursor-pointer"
+            title="Finish your unfinished buildings and resume saved projects"
+          >
+            <HardDrive className="w-3.5 h-3.5 text-amber-500" />
+            <span className="hidden lg:inline text-[11px]">Finish Later</span>
+          </button>
+        </div>
+
         {/* 3D Workspace Indicator */}
-        <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-neutral-600 dark:text-neutral-300 bg-neutral-50 dark:bg-[#141926] border border-neutral-200 dark:border-neutral-800">
+        <div className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-neutral-600 dark:text-neutral-300 bg-neutral-50 dark:bg-[#141926] border border-neutral-200 dark:border-neutral-800">
           <Compass className="w-3.5 h-3.5 text-amber-500" />
-          <span className="text-ry-gradient font-bold">3D Studio Workspace</span>
+          <span className="text-ry-gradient font-bold">3D Studio</span>
         </div>
       </div>
 
