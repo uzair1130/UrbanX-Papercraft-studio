@@ -8,7 +8,7 @@ import {
   BuildingModel, 
   RayTracingSettings 
 } from './types';
-import { STARTER_BUILDING, DEFAULT_BUILDINGS } from './data/defaultBuildings';
+import { STARTER_BUILDING, PRESET_BUILDING_IDS } from './data/defaultBuildings';
 import { Header } from './components/common/Header';
 import { BlenderStudio } from './components/studio/BlenderStudio';
 import { ExportModal } from './components/export/ExportModal';
@@ -45,9 +45,12 @@ export default function App() {
     }
   }, [theme]);
 
-  // Building currently loaded in 3D Blender Studio (restores active draft from device storage if present)
+  // Building currently loaded in 3D Studio (restores active draft from device storage if present)
   const [currentBuilding, setCurrentBuilding] = useState<BuildingModel>(() => {
     const savedDraft = loadActiveDraftFromDevice();
+    if (savedDraft && (PRESET_BUILDING_IDS.has(savedDraft.id) || savedDraft.id.startsWith('bldg_empire_state') || savedDraft.id.startsWith('bldg_burj') || savedDraft.id.startsWith('bldg_shanghai') || savedDraft.id.startsWith('bldg_jin_mao') || savedDraft.id.startsWith('bldg_evolution') || savedDraft.id.startsWith('bldg_kingdom') || savedDraft.id.startsWith('bldg_al_faisaliah') || savedDraft.id.startsWith('bldg_one_world') || savedDraft.id.startsWith('bldg_kafd') || savedDraft.id.startsWith('bldg_jeddah') || savedDraft.id.startsWith('bldg_modern_tower') || savedDraft.id.startsWith('bldg_modular') || savedDraft.id.startsWith('bldg_historic'))) {
+      return STARTER_BUILDING;
+    }
     return savedDraft || STARTER_BUILDING;
   });
 

@@ -63,7 +63,7 @@ export const Header: React.FC<HeaderProps> = ({
           <select
             value={currentBuilding.id}
             onChange={(e) => {
-              const selected = buildingCatalog[e.target.value] || DEFAULT_BUILDINGS[e.target.value];
+              const selected = buildingCatalog[e.target.value] || (DEFAULT_BUILDINGS ? DEFAULT_BUILDINGS[e.target.value] : undefined);
               if (selected) {
                 onSelectBuilding(selected);
               }
@@ -71,7 +71,7 @@ export const Header: React.FC<HeaderProps> = ({
             className="bg-transparent text-neutral-900 dark:text-neutral-100 text-xs font-semibold outline-none cursor-pointer max-w-[140px] sm:max-w-[200px] truncate"
             title="Switch between 3D papercraft models"
           >
-            {!buildingCatalog[currentBuilding.id] && !DEFAULT_BUILDINGS[currentBuilding.id] && (
+            {!buildingCatalog[currentBuilding.id] && (
               <option value={currentBuilding.id} className="bg-white dark:bg-[#141926] text-neutral-900 dark:text-neutral-100 font-normal">
                 {currentBuilding.name} (Active Canvas)
               </option>
@@ -86,14 +86,6 @@ export const Header: React.FC<HeaderProps> = ({
                 ))}
               </optgroup>
             )}
-
-            <optgroup label="Sample Presets">
-              {Object.values(DEFAULT_BUILDINGS).map((b) => (
-                <option key={b.id} value={b.id} className="bg-white dark:bg-[#141926] text-neutral-900 dark:text-neutral-100 font-normal">
-                  {b.name} {b.heightMeters > 0 ? `(${b.heightMeters}m)` : ''}
-                </option>
-              ))}
-            </optgroup>
           </select>
 
           <button

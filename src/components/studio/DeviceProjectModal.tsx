@@ -16,7 +16,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { BuildingModel } from '../../types';
-import { DEFAULT_BUILDINGS } from '../../data/defaultBuildings';
+import { DEFAULT_BUILDINGS, PRESET_BUILDING_IDS } from '../../data/defaultBuildings';
 import { 
   exportBuildingToDeviceFile, 
   importBuildingFromDeviceFile, 
@@ -120,7 +120,7 @@ export const DeviceProjectModal: React.FC<DeviceProjectModalProps> = ({
 
   // Strictly user-saved projects on this device (all presets excluded)
   const savedBuildingsList = Object.values(buildingCatalog).filter(
-    (bldg) => Boolean(bldg && !DEFAULT_BUILDINGS[bldg.id] && bldg.id !== 'bldg_blank_starter')
+    (bldg) => Boolean(bldg && !DEFAULT_BUILDINGS[bldg.id] && !PRESET_BUILDING_IDS.has(bldg.id) && bldg.id !== 'bldg_blank_starter')
   );
 
   return (
@@ -218,7 +218,7 @@ export const DeviceProjectModal: React.FC<DeviceProjectModalProps> = ({
                   No Saved Projects on This Device Yet
                 </h3>
                 <p className="text-xs text-neutral-500 dark:text-neutral-400 max-w-md mb-4 leading-relaxed">
-                  Preset templates have been removed from this device storage. When you save your building draft or download a .paper file, it will be stored right here so you can finish it later.
+                  When you save your building draft or download a .paper file, it will be stored right here on your device so you can resume your projects anytime.
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-2">
                   <button

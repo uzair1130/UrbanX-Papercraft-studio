@@ -670,22 +670,23 @@ export const BLANK_BUILDING: BuildingModel = {
   components: [],
 };
 
-export const DEFAULT_BUILDINGS: Record<string, BuildingModel> = {
-  'bldg_blank_starter': BLANK_BUILDING,
-  'bldg_empire_state': EMPIRE_STATE_BUILDING,
-  'bldg_burj_al_arab': BURJ_AL_ARAB,
-  'bldg_shanghai_wfc': SHANGHAI_WFC,
-  'bldg_shanghai_tower': SHANGHAI_TOWER,
-  'bldg_jin_mao': JIN_MAO_TOWER,
-  'bldg_evolution_tower': EVOLUTION_TOWER,
-  'bldg_kingdom_centre': KINGDOM_CENTRE,
-  'bldg_al_faisaliah': AL_FAISALIAH_TOWER,
-  'bldg_one_world_trade': ONE_WORLD_TRADE,
-  'bldg_kafd_crystal': KAFD_CRYSTAL_TOWER,
-  'bldg_jeddah_supertall': JEDDAH_SUPERTALL,
-  'bldg_modern_tower': MODERN_TOWER,
-  'bldg_modular_complex': MODULAR_COMPLEX,
-  'bldg_historic_townhouse': HISTORIC_TOWNHOUSE,
-};
+export const PRESET_BUILDING_IDS = new Set([
+  'bldg_empire_state',
+  'bldg_burj_al_arab',
+  'bldg_shanghai_wfc',
+  'bldg_shanghai_tower',
+  'bldg_jin_mao',
+  'bldg_evolution_tower',
+  'bldg_kingdom_centre',
+  'bldg_al_faisaliah',
+  'bldg_one_world_trade',
+  'bldg_kafd_crystal',
+  'bldg_jeddah_supertall',
+  'bldg_modern_tower',
+  'bldg_modular_complex',
+  'bldg_historic_townhouse',
+]);
+
+export const DEFAULT_BUILDINGS: Record<string, BuildingModel> = {};
 
 export const STARTER_BUILDING: BuildingModel = BLANK_BUILDING;

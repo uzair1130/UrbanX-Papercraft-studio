@@ -4183,13 +4183,13 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
               )}
             </div>
 
-            {/* Category Filter for Presets */}
+            {/* Category Filter for Textures */}
             <div>
               <div className="flex justify-between items-center mb-1.5">
                 <span className="text-[10px] font-bold text-ry-gradient uppercase tracking-wider">
-                  Preset Architectural Textures
+                  Architectural Textures & Materials
                 </span>
-                <span className="text-[10px] text-neutral-400 font-mono">12 Presets</span>
+                <span className="text-[10px] text-neutral-400 font-mono">12 Finishes</span>
               </div>
               <div className="flex flex-wrap gap-1 mb-2.5">
                 {['All', 'Architectural', 'Facades & Windows', 'Paper & Card', 'Materials'].map((cat) => (

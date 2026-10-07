@@ -1,5 +1,5 @@
 import { BuildingModel, PaperComponent } from '../types';
-import { STARTER_BUILDING, DEFAULT_BUILDINGS } from '../data/defaultBuildings';
+import { STARTER_BUILDING, DEFAULT_BUILDINGS, PRESET_BUILDING_IDS } from '../data/defaultBuildings';
 
 export const DRAFT_STORAGE_KEY = 'papercraft_cad_active_draft';
 export const CATALOG_STORAGE_KEY = 'papercraft_cad_saved_catalog';
@@ -141,6 +141,9 @@ export function loadActiveDraftFromDevice(): BuildingModel | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (parsed && Array.isArray(parsed.components)) {
+      if (PRESET_BUILDING_IDS.has(parsed.id) || parsed.id?.startsWith('bldg_empire_state') || parsed.id?.startsWith('bldg_burj') || parsed.id?.startsWith('bldg_shanghai')) {
+        return null;
+      }
       return parsed as BuildingModel;
     }
   } catch (err) {
@@ -190,7 +193,7 @@ export function loadDeviceCatalog(): Record<string, BuildingModel> {
         // Filter out any default presets to ensure device storage only holds user projects
         const userProjects: Record<string, BuildingModel> = {};
         for (const [id, bldg] of Object.entries(parsed)) {
-          if (!DEFAULT_BUILDINGS[id] && bldg && typeof bldg === 'object') {
+          if (!DEFAULT_BUILDINGS[id] && !PRESET_BUILDING_IDS.has(id) && bldg && typeof bldg === 'object') {
             userProjects[id] = bldg as BuildingModel;
           }
         }
