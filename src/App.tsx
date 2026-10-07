@@ -126,7 +126,7 @@ export default function App() {
   };
 
   return (
-    <div className={`w-screen h-screen flex flex-col overflow-hidden font-sans transition-colors duration-150 ${
+    <div className={`fixed inset-0 w-full h-full max-w-full max-h-screen flex flex-col overflow-hidden font-sans transition-colors duration-150 ${
       theme === 'dark' ? 'bg-[#0c0f17] text-neutral-100' : 'bg-white text-neutral-900'
     }`}>
       {/* Studio Header Contract */}

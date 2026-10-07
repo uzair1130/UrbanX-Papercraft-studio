@@ -31,7 +31,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleTheme,
 }) => {
   return (
-    <header className="h-13 bg-white dark:bg-[#0e121b] border-b border-neutral-200 dark:border-neutral-800 px-4 flex items-center justify-between shrink-0 select-none z-30 transition-colors duration-150">
+    <header className="h-13 bg-white dark:bg-[#0e121b] border-b border-neutral-200 dark:border-neutral-800 px-2 sm:px-4 flex items-center justify-between shrink-0 select-none z-30 transition-colors duration-150 min-w-0 max-w-full overflow-x-auto no-scrollbar gap-2">
       {/* Zone 1: Wordmark & Architecture Studio Brand */}
       <div className="flex items-center gap-3">
         <a 

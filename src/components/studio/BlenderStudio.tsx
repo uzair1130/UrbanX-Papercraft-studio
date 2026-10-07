@@ -47,7 +47,9 @@ import {
   Download,
   History,
   Clock,
-  ChevronDown
+  ChevronDown,
+  PanelLeft,
+  PanelRight
 } from 'lucide-react';
 import { exportBuildingToDeviceFile } from '../../utils/deviceStorage';
 import { HistoryManager, HistoryManagerState, cloneComponents } from '../../utils/historyManager';
@@ -200,6 +202,8 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
   const [textureCategoryFilter, setTextureCategoryFilter] = useState<string>('All');
   const [hoveredCompName, setHoveredCompName] = useState<string | null>(null);
   const [selectedFaceKey, setSelectedFaceKey] = useState<GeometryFaceKey>('all');
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
 
   // Save Modal state
   const [saveModalOpen, setSaveModalOpen] = useState(false);
@@ -433,6 +437,11 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
     };
     window.addEventListener('resize', handleResize);
 
+    const resizeObserver = new ResizeObserver(() => {
+      handleResize();
+    });
+    resizeObserver.observe(container);
+
     // Render loop
     let animId: number;
     const animate = () => {
@@ -446,6 +455,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
     return () => {
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       if (renderer.domElement && container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
       }
@@ -989,13 +999,93 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
     };
   }, []);
 
+  /**
+   * Automatically calculate the 3D bounding box of the building model
+   * and frame the camera distance & target so all components fit comfortably inside the viewport.
+   */
+  const fitCameraToBuilding = (comps: PaperComponent[] = currentBuilding.components) => {
+    if (!cameraRef.current || !mountRef.current) return;
+
+    if (!comps || comps.length === 0) {
+      cameraTargetRef.current.set(0, 2, 0);
+      cameraRadiusRef.current = 16;
+      updateCameraPosition();
+      return;
+    }
+
+    const box = new THREE.Box3();
+    let hasValidMesh = false;
+
+    // Use actual rendered meshes if present
+    meshesMapRef.current.forEach((mesh) => {
+      if (mesh.visible) {
+        mesh.updateMatrixWorld(true);
+        if (!mesh.geometry.boundingBox) {
+          mesh.geometry.computeBoundingBox();
+        }
+        if (mesh.geometry.boundingBox) {
+          const meshBox = mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrixWorld);
+          box.union(meshBox);
+          hasValidMesh = true;
+        }
+      }
+    });
+
+    // Fallback directly from component transforms if meshes are not yet ready
+    if (!hasValidMesh) {
+      comps.forEach((c) => {
+        if (c.visible !== false) {
+          const [px, py, pz] = c.position;
+          const [sx, sy, sz] = c.scale;
+          const min = new THREE.Vector3(px - sx / 2, py - sy / 2, pz - sz / 2);
+          const max = new THREE.Vector3(px + sx / 2, py + sy / 2, pz + sz / 2);
+          box.expandByPoint(min);
+          box.expandByPoint(max);
+          hasValidMesh = true;
+        }
+      });
+    }
+
+    if (!hasValidMesh) {
+      cameraTargetRef.current.set(0, 2, 0);
+      cameraRadiusRef.current = 16;
+      updateCameraPosition();
+      return;
+    }
+
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+
+    // Compute bounding radius & extent
+    const maxDim = Math.max(size.x, size.y, size.z, 2);
+    const diagonal = Math.sqrt(size.x * size.x + size.y * size.y + size.z * size.z);
+
+    const fov = (cameraRef.current.fov * Math.PI) / 180;
+    const aspect = cameraRef.current.aspect || 1;
+    const hFov = 2 * Math.atan(Math.tan(fov / 2) * aspect);
+
+    // Distance required to fit vertically and horizontally
+    const distY = (size.y / 2) / Math.tan(fov / 2);
+    const distX = (size.x / 2) / Math.tan(hFov / 2);
+    const distDiag = (diagonal / 2) / Math.sin(Math.min(fov, hFov) / 2);
+
+    let optimalDist = Math.max(distY, distX, distDiag * 0.95, maxDim * 1.5);
+    // 35% comfortable breathing margin so it fits inside cleanly without touching edges/HUDs
+    optimalDist = optimalDist * 1.35;
+    // Keep within reasonable bounds
+    optimalDist = Math.max(8, Math.min(180, optimalDist));
+
+    cameraTargetRef.current.copy(center);
+    cameraRadiusRef.current = optimalDist;
+    updateCameraPosition();
+  };
+
   const handleResetCamera = () => {
-    const midHeight = (currentBuilding.heightMeters / 4) * 0.5;
-    cameraTargetRef.current.set(0, Math.max(2, midHeight), 0);
-    cameraRadiusRef.current = 18;
     cameraThetaRef.current = Math.PI / 4;
     cameraPhiRef.current = Math.PI / 3;
-    updateCameraPosition();
+    fitCameraToBuilding();
   };
 
   // Preset Views (Isometric, Top, Front, Right)
@@ -1015,6 +1105,18 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
     }
     updateCameraPosition();
   };
+
+  // Automatically fit camera so the loaded building fits comfortably inside the screen
+  const autoFitBuildingIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (currentBuilding && currentBuilding.id !== autoFitBuildingIdRef.current) {
+      autoFitBuildingIdRef.current = currentBuilding.id;
+      const timer = setTimeout(() => {
+        fitCameraToBuilding(currentBuilding.components);
+      }, 70);
+      return () => clearTimeout(timer);
+    }
+  }, [currentBuilding.id]);
 
   // Add Component to current building
   const handleAddComponent = (shape: ComponentShape) => {
@@ -1437,6 +1539,9 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
       } else if (e.key === 'r' || e.key === 'R') {
         e.preventDefault();
         handleResetCamera();
+      } else if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        fitCameraToBuilding();
       } else if (e.key === '+' || e.key === '=') {
         e.preventDefault();
         handleZoom(-2);
@@ -1904,7 +2009,8 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
   return (
     <div className="flex-1 flex overflow-hidden relative select-none bg-white dark:bg-[#0c0f17] text-neutral-800 dark:text-neutral-200 transition-colors duration-150">
       {/* 1. Left Component Palette - Minimal Clean CAD Sidebar */}
-      <div className="w-56 bg-white dark:bg-[#0e121b] border-r border-neutral-200 dark:border-neutral-800 flex flex-col shrink-0 z-10 text-neutral-700 dark:text-neutral-300">
+      {leftSidebarOpen && (
+        <div className="w-56 bg-white dark:bg-[#0e121b] border-r border-neutral-200 dark:border-neutral-800 flex flex-col shrink-0 z-10 text-neutral-700 dark:text-neutral-300">
         <div className="p-2.5 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider">
             <span className="w-2 h-2 bg-ry-gradient inline-block" />
@@ -2477,13 +2583,34 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
           </div>
         </div>
       </div>
+      )}
 
       {/* 2. Central 3D Viewport Canvas */}
-      <div className="flex-1 flex flex-col relative overflow-hidden">
+      <div className="flex-1 flex flex-col relative overflow-hidden min-w-0 h-full">
         {/* Viewport Top Bar - Clean White with Minimal Controls */}
-        <div className="h-11 bg-white/95 dark:bg-[#0e121b]/95 backdrop-blur-xs border-b border-neutral-200 dark:border-neutral-800 px-3 flex items-center justify-between text-xs z-10 gap-2">
-          {/* Left: Project Switcher, New Button, Editable Title & Category */}
+        <div className="h-11 bg-white/95 dark:bg-[#0e121b]/95 backdrop-blur-xs border-b border-neutral-200 dark:border-neutral-800 px-2 sm:px-3 flex items-center justify-between text-xs z-10 gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar shrink-0 min-w-0">
+          {/* Left: Sidebar Toggle, Project Switcher, New Button, Editable Title & Category */}
           <div className="flex items-center gap-2 min-w-0">
+            {/* Toggle Left Sidebar Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setLeftSidebarOpen(!leftSidebarOpen);
+                setTimeout(() => {
+                  window.dispatchEvent(new Event('resize'));
+                  fitCameraToBuilding();
+                }, 60);
+              }}
+              className={`p-1.5 border transition-colors cursor-pointer shrink-0 ${
+                leftSidebarOpen
+                  ? 'bg-neutral-50 hover:bg-neutral-100 dark:bg-[#141926] dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 border-neutral-200 dark:border-neutral-800'
+                  : 'bg-amber-500/10 border-amber-500/40 text-amber-600 dark:text-amber-400 font-bold'
+              }`}
+              title={leftSidebarOpen ? 'Hide Left Palette (Fit Screen)' : 'Show Left Palette'}
+            >
+              <PanelLeft className="w-3.5 h-3.5" />
+            </button>
+
             {/* Catalog Switcher */}
             {buildingCatalog && Object.keys(buildingCatalog).length > 0 && (
               <div className="flex items-center gap-1 bg-neutral-50 dark:bg-[#141926] px-2 py-1 border border-neutral-200 dark:border-neutral-800 shrink-0">
@@ -2591,6 +2718,17 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
                 <span className="hidden sm:inline">Pan</span>
               </button>
             </div>
+
+            {/* Fit Building to Screen Button */}
+            <button
+              type="button"
+              onClick={() => fitCameraToBuilding()}
+              className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold bg-neutral-50 hover:bg-neutral-100 dark:bg-[#141926] dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-800 transition-colors cursor-pointer shrink-0"
+              title="Fit Building Inside Screen (Hotkey: F)"
+            >
+              <Maximize2 className="w-3 h-3 text-amber-500" />
+              <span className="hidden sm:inline">Fit Screen</span>
+            </button>
 
             {/* History State Manager (Undo / Redo & Timeline Dropdown) */}
             <div ref={historyDropdownRef} className="relative flex items-center bg-neutral-50 dark:bg-[#141926] border border-neutral-200 dark:border-neutral-800">
@@ -2750,6 +2888,26 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
               <Save className="w-3.5 h-3.5" />
               <span>Save Building</span>
             </button>
+
+            {/* Toggle Right Inspector Sidebar Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setRightSidebarOpen(!rightSidebarOpen);
+                setTimeout(() => {
+                  window.dispatchEvent(new Event('resize'));
+                  fitCameraToBuilding();
+                }, 60);
+              }}
+              className={`p-1.5 border transition-colors cursor-pointer shrink-0 ${
+                rightSidebarOpen
+                  ? 'bg-neutral-50 hover:bg-neutral-100 dark:bg-[#141926] dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 border-neutral-200 dark:border-neutral-800'
+                  : 'bg-amber-500/10 border-amber-500/40 text-amber-600 dark:text-amber-400 font-bold'
+              }`}
+              title={rightSidebarOpen ? 'Hide Right Panel (Fit Screen)' : 'Show Right Panel'}
+            >
+              <PanelRight className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
 
@@ -2799,7 +2957,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
 
           {/* Quick Component Move HUD when in Select mode & component is selected */}
           {selectedComp && (
-            <div className="absolute top-3 right-3 bg-white/95 dark:bg-[#0e121b]/95 backdrop-blur-xs border border-neutral-200 dark:border-neutral-800 px-3 py-1.5 text-[11px] flex items-center gap-2 z-20 shadow-md">
+            <div className="absolute top-3 right-3 bg-white/95 dark:bg-[#0e121b]/95 backdrop-blur-xs border border-neutral-200 dark:border-neutral-800 px-3 py-1.5 text-[11px] flex items-center gap-2 z-20 shadow-md max-w-[calc(100%-1.5rem)] overflow-x-auto no-scrollbar shrink-0">
               <span className="text-ry-gradient font-bold uppercase tracking-wider truncate max-w-[120px]">
                 {selectedComp.name}
               </span>
@@ -2964,25 +3122,25 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
           )}
 
           {/* Subtle Viewport Navigation Overlay Guide */}
-          <div className="absolute bottom-3 left-3 bg-white/95 dark:bg-[#0e121b]/95 backdrop-blur-xs border border-neutral-200 dark:border-neutral-800 px-3 py-1.5 text-[11px] text-neutral-600 dark:text-neutral-400 pointer-events-none flex items-center gap-2 z-20 shadow-xs">
-            <span className="text-ry-gradient font-bold flex items-center gap-1">
+          <div className="absolute bottom-3 left-3 bg-white/95 dark:bg-[#0e121b]/95 backdrop-blur-xs border border-neutral-200 dark:border-neutral-800 px-3 py-1.5 text-[11px] text-neutral-600 dark:text-neutral-400 pointer-events-none flex items-center gap-2 z-20 shadow-xs max-w-[calc(100%-14rem)] overflow-hidden text-ellipsis whitespace-nowrap hidden sm:flex">
+            <span className="text-ry-gradient font-bold flex items-center gap-1 shrink-0">
               <MousePointer className="w-3 h-3 text-amber-500" />
               <span>Select Mode</span>
             </span>
             <span>·</span>
-            <span className="text-neutral-700 dark:text-neutral-300 font-medium">Drag: Orbit</span>
+            <span className="text-amber-600 dark:text-amber-400 font-bold shrink-0">F: Fit Screen</span>
             <span>·</span>
-            <span className="text-neutral-700 dark:text-neutral-300 font-medium">Shift/Right-Drag: Pan</span>
+            <span className="text-neutral-700 dark:text-neutral-300 font-medium shrink-0">Drag: Orbit</span>
             <span>·</span>
-            <span className="text-ry-gradient font-bold">WASD / Arrows: Move View</span>
+            <span className="text-neutral-700 dark:text-neutral-300 font-medium shrink-0">Shift/Right-Drag: Pan</span>
             <span>·</span>
-            <span className="text-amber-600 dark:text-amber-400 font-semibold">[ / ] Bend Curvature · B Axis</span>
+            <span className="text-ry-gradient font-bold shrink-0">WASD: Move</span>
             <span>·</span>
-            <span>Wheel: Zoom</span>
+            <span className="shrink-0">[ / ] Bend</span>
             {hoveredCompName && (
               <>
                 <span>·</span>
-                <span className="text-neutral-900 dark:text-white font-medium bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 border border-neutral-300 dark:border-neutral-700">
+                <span className="text-neutral-900 dark:text-white font-medium bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 border border-neutral-300 dark:border-neutral-700 truncate">
                   Target: {hoveredCompName}
                 </span>
               </>
@@ -3051,11 +3209,11 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
             </button>
             <div className="w-[1px] h-4 bg-neutral-200 dark:bg-neutral-800 mx-0.5" />
             <button
-              onClick={handleResetCamera}
-              className="p-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white transition-colors cursor-pointer"
-              title="Reset & Center View"
+              onClick={() => fitCameraToBuilding()}
+              className="p-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:text-amber-600 dark:hover:text-amber-400 transition-colors cursor-pointer"
+              title="Fit Building Inside Screen (Hotkey: F)"
             >
-              <Maximize2 className="w-3.5 h-3.5" />
+              <Maximize2 className="w-3.5 h-3.5 text-amber-500" />
             </button>
           </div>
 
@@ -3093,7 +3251,8 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
       </div>
 
       {/* 3. Right Blender-Style Inspector & Outliner */}
-      <div className="w-80 bg-white dark:bg-[#0e121b] border-l border-neutral-200 dark:border-neutral-800 flex flex-col shrink-0 z-10 text-neutral-700 dark:text-neutral-300">
+      {rightSidebarOpen && (
+        <div className="w-80 bg-white dark:bg-[#0e121b] border-l border-neutral-200 dark:border-neutral-800 flex flex-col shrink-0 z-10 text-neutral-700 dark:text-neutral-300">
         {/* Tab Headers with Secondary Red-to-Yellow Hairline */}
         <div className="flex border-b border-neutral-200 dark:border-neutral-800 text-xs">
           <button
@@ -4345,6 +4504,7 @@ export const BlenderStudio: React.FC<BlenderStudioProps> = ({
           </div>
         )}
       </div>
+      )}
 
       {/* Save Building Dialog Modal */}
       {saveModalOpen && (

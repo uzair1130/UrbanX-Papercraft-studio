@@ -641,6 +641,11 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({ isOpen, onClose })
                         <td className="p-2 font-sans text-neutral-500">Quickly toggle active mouse tool</td>
                       </tr>
                       <tr>
+                        <td className="p-2 font-sans font-medium">Fit to Screen</td>
+                        <td className="p-2"><kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border">F</kbd></td>
+                        <td className="p-2 font-sans text-neutral-500">Fit entire building inside viewport</td>
+                      </tr>
+                      <tr>
                         <td className="p-2 font-sans font-medium">Undo / Redo</td>
                         <td className="p-2"><kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border">Ctrl+Z</kbd> / <kbd className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 border">Ctrl+Y</kbd></td>
                         <td className="p-2 font-sans text-neutral-500">Full undo / redo history stack</td>
